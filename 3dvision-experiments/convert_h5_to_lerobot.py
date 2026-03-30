@@ -167,4 +167,4 @@ def main(config: ConvertConfig) -> None:
 
 
 if __name__ == "__main__":
-    tyro.cli(main)
+    main(tyro.cli(ConvertConfig))
