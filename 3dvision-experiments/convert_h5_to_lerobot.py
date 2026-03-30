@@ -102,8 +102,24 @@ def create_dataset(repo_id: str) -> LeRobotDataset:
     )
 
 
-def convert_episode(dataset: LeRobotDataset, h5_path: Path, task_prompt: str) -> None:
+EXPECTED_KEYS = [
+    "observations/images/aria_rgb_cam/color",
+    "observations/qpos_arm",
+    "observations/qpos_hand",
+    "actions_arm",
+    "actions_hand",
+]
+
+
+def convert_episode(dataset: LeRobotDataset, h5_path: Path, task_prompt: str) -> bool:
+    """Returns True if the episode was converted, False if skipped."""
     with h5py.File(h5_path, "r") as f:
+        # Skip files with missing keys (some h5 files have different structure).
+        for key in EXPECTED_KEYS:
+            if key not in f:
+                print(f"\n  Skipping {h5_path.name}: missing key '{key}'")
+                return False
+
         images = f["observations/images/aria_rgb_cam/color"]
         qpos_arm = f["observations/qpos_arm"][:]
         qpos_hand = f["observations/qpos_hand"][:]
@@ -125,6 +141,7 @@ def convert_episode(dataset: LeRobotDataset, h5_path: Path, task_prompt: str) ->
             )
 
     dataset.save_episode()
+    return True
 
 
 def convert_task_dir(dataset: LeRobotDataset, task_dir: Path, task_prompt: str, max_episodes: int | None) -> int:
@@ -137,10 +154,17 @@ def convert_task_dir(dataset: LeRobotDataset, task_dir: Path, task_prompt: str, 
         h5_files = h5_files[:max_episodes]
 
     print(f"  Converting {len(h5_files)} episodes from {task_dir.name} (task: '{task_prompt}')")
+    converted = 0
+    skipped = 0
     for h5_path in tqdm.tqdm(h5_files, desc=f"  {task_dir.name}"):
-        convert_episode(dataset, h5_path, task_prompt)
+        if convert_episode(dataset, h5_path, task_prompt):
+            converted += 1
+        else:
+            skipped += 1
 
-    return len(h5_files)
+    if skipped:
+        print(f"  Skipped {skipped}/{len(h5_files)} episodes with incompatible format")
+    return converted
 
 
 def main(config: ConvertConfig) -> None:
