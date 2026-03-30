@@ -4,7 +4,7 @@
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=128G
+#SBATCH --mem-per-cpu=16G
 #SBATCH --time=24:00:00
 #SBATCH --gres=gpu:1
 # Adjust partition and GPU type for your cluster:
