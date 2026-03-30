@@ -19,6 +19,7 @@ import openpi.models.pi0_fast as pi0_fast
 import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
+import openpi.policies.egoverse_policy as egoverse_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
@@ -347,6 +348,42 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         model_transforms = ModelTransformFactory()(model_config)
 
         # We return all data transforms for training and inference. No need to change anything here.
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotEgoverseDataConfig(DataConfigFactory):
+    """Data config for Egoverse: Franka arm + dexterous hand, single Aria egocentric camera."""
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Repack: {new_key: old_key}. LeRobot stores as "image", "state", "actions";
+        # policy transforms expect "observation/image", "observation/state".
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/image": "image",
+                        "observation/state": "state",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[egoverse_policy.EgoverseInputs(model_type=model_config.model_type)],
+            outputs=[egoverse_policy.EgoverseOutputs()],
+        )
+
+        model_transforms = ModelTransformFactory()(model_config)
+
         return dataclasses.replace(
             self.create_base_config(assets_dirs, model_config),
             repack_transforms=repack_transform,
@@ -964,6 +1001,59 @@ _CONFIGS = [
         overwrite=True,
         exp_name="debug_pi05",
         wandb_enabled=False,
+    ),
+    #
+    # Egoverse configs (3DV project — Franka + dexterous hand, Aria egocentric camera).
+    #
+    TrainConfig(
+        name="pi05_egoverse",
+        # LoRA finetuning — fits on ~24 GB (RTX 3090/4090).
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=10,
+            discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotEgoverseDataConfig(
+            repo_id="egoverse/all",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi05_egoverse_full",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
+        data=LeRobotEgoverseDataConfig(
+            repo_id="egoverse/all",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=256,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=10_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=30_000,
     ),
     # RoboArena & PolaRiS configs.
     *roboarena_config.get_roboarena_configs(),
