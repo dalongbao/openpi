@@ -97,8 +97,8 @@ def create_dataset(repo_id: str) -> LeRobotDataset:
                 "names": ["actions"],
             },
         },
-        image_writer_threads=10,
-        image_writer_processes=5,
+        image_writer_threads=2,
+        image_writer_processes=2,
     )
 
 
