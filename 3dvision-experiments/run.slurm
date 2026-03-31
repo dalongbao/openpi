@@ -33,6 +33,10 @@ cd "$SLURM_SUBMIT_DIR"
 # If uv is not on PATH, adjust this.
 export PATH="$HOME/.local/bin:$PATH"
 
+# Dataset location (same as convert_data.slurm).
+export HF_LEROBOT_HOME="/cluster/work/cvg/data/rytsui/lerobot"
+export LEROBOT_HOME="$HF_LEROBOT_HOME"
+
 # Let JAX use 90% of GPU memory.
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 
