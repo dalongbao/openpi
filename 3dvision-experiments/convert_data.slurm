@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=16G
-#SBATCH --time=02:00:00
+#SBATCH --time=12:00:00
 # No GPU needed for conversion.
 
 set -euo pipefail
