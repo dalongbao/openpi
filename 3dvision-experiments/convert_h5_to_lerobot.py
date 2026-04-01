@@ -40,6 +40,7 @@ import tyro
 # Actions = actions_arm (7) + actions_hand (17) = 24
 STATE_DIM = 24
 ACTION_DIM = 24
+
 FPS = 50
 
 # Task name mapping from directory names to language prompts.
