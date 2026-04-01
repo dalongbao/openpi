@@ -362,15 +362,14 @@ class LeRobotEgoverseDataConfig(DataConfigFactory):
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        # Repack: {new_key: old_key}. Dataset uses dotted keys (observation.images.aria_rgb,
-        # observation.state, action); policy transforms expect observation/image, observation/state.
+        # Repack: {new_key: old_key}. Dataset stores flat keys (image, state, actions).
         repack_transform = _transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "observation/image": "observation.images.aria_rgb",
-                        "observation/state": "observation.state",
-                        "actions": "action",
+                        "observation/image": "image",
+                        "observation/state": "state",
+                        "actions": "actions",
                         "prompt": "prompt",
                     }
                 )

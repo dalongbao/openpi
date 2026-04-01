@@ -29,6 +29,9 @@ STATE_DIM = 24  # qpos_arm (7) + qpos_hand (17)
 ACTION_DIM = 24  # actions_arm (7) + actions_hand (17)
 FPS = 50
 
+# Skip episodes longer than this to avoid OOM during parquet write.
+MAX_FRAMES = 5000
+
 TASK_PROMPTS = {
     "object_in_bowl_processed_50hz": "put the object in the bowl",
     "bag_groceries": "bag the groceries",
@@ -62,26 +65,26 @@ def create_dataset(repo_id: str) -> LeRobotDataset:
     return LeRobotDataset.create(
         repo_id=repo_id,
         fps=FPS,
+        robot_type="franka",
         features={
-            "observation.images.aria_rgb": {
-                "dtype": "video",
+            "image": {
+                "dtype": "image",
                 "shape": (480, 640, 3),
-                "names": ["height", "width", "rgb"],
+                "names": ["height", "width", "channel"],
             },
-            "observation.state": {
+            "state": {
                 "dtype": "float32",
                 "shape": (STATE_DIM,),
-                "names": {"motors": [f"joint_{i}" for i in range(STATE_DIM)]},
+                "names": ["state"],
             },
-            "action": {
+            "actions": {
                 "dtype": "float32",
                 "shape": (ACTION_DIM,),
-                "names": {"motors": [f"joint_{i}" for i in range(ACTION_DIM)]},
+                "names": ["actions"],
             },
         },
-        use_videos=True,
-        image_writer_processes=4,
-        image_writer_threads=4,
+        image_writer_threads=2,
+        image_writer_processes=2,
     )
 
 
@@ -93,6 +96,11 @@ def convert_episode(dataset: LeRobotDataset, h5_path: Path, task_prompt: str) ->
                     print(f"\n  Skipping {h5_path.name}: missing key '{key}'")
                     return False
 
+            num_frames = f["observations/qpos_arm"].shape[0]
+            if num_frames > MAX_FRAMES:
+                print(f"\n  Skipping {h5_path.name}: {num_frames} frames exceeds {MAX_FRAMES} limit")
+                return False
+
             images = f["observations/images/aria_rgb_cam/color"]
             qpos_arm = f["observations/qpos_arm"][:]
             qpos_hand = f["observations/qpos_hand"][:]
@@ -102,14 +110,14 @@ def convert_episode(dataset: LeRobotDataset, h5_path: Path, task_prompt: str) ->
             state = np.concatenate([qpos_arm, qpos_hand], axis=1).astype(np.float32)
             actions = np.concatenate([act_arm, act_hand], axis=1).astype(np.float32)
 
-            for i in range(state.shape[0]):
+            for i in range(num_frames):
                 dataset.add_frame(
                     {
-                        "observation.images.aria_rgb": images[i],
-                        "observation.state": state[i],
-                        "action": actions[i],
-                    },
-                    task=task_prompt,
+                        "image": images[i],
+                        "state": state[i],
+                        "actions": actions[i],
+                        "task": task_prompt,
+                    }
                 )
 
         dataset.save_episode()
