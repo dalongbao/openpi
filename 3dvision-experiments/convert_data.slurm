@@ -15,7 +15,6 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # Write datasets to work dir (home has limited quota).
 export HF_LEROBOT_HOME="/cluster/work/cvg/data/rytsui/lerobot"
-export LEROBOT_HOME="$HF_LEROBOT_HOME"
 mkdir -p "$HF_LEROBOT_HOME"
 
 echo "=== Converting Egoverse h5 to LeRobot ==="

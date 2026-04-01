@@ -29,9 +29,9 @@ import h5py
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 try:
-    from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
+    from lerobot.common.constants import HF_LEROBOT_HOME as LEROBOT_HOME
 except ImportError:
-    from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME as LEROBOT_HOME
+    from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
 import numpy as np
 import tqdm
 import tyro
