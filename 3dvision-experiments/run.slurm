@@ -6,10 +6,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=16G
 #SBATCH --time=24:00:00
-#SBATCH --gres=gpu:1
-# Adjust partition and GPU type for your cluster:
-# #SBATCH --partition=gpu
-# #SBATCH --gres=gpu:a100:1
+#SBATCH --gpus=a100_80gb:1
 
 set -euo pipefail
 
@@ -23,7 +20,7 @@ echo "Config:   $CONFIG"
 echo "Exp name: $EXP_NAME"
 echo "Seed:     $SEED"
 echo "Node:     $(hostname)"
-echo "GPUs:     $CUDA_VISIBLE_DEVICES"
+echo "GPUs:     ${CUDA_VISIBLE_DEVICES:-not set}"
 echo "Date:     $(date)"
 echo "==========================================="
 
@@ -42,15 +39,8 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 # Wandb project — change as needed.
 export WANDB_PROJECT="pi05_egoverse"
 
-# ── Compute norm stats if missing ────────────────────────────────────
-ASSETS_DIR="./assets/${CONFIG}"
-if [ ! -d "$ASSETS_DIR" ] || [ -z "$(ls -A "$ASSETS_DIR" 2>/dev/null)" ]; then
-    echo "Computing normalization statistics..."
-    uv run scripts/compute_norm_stats.py --config-name "$CONFIG"
-fi
-
 # ── Train ────────────────────────────────────────────────────────────
 echo "Starting training..."
-uv run scripts/train.py "$CONFIG" \
+uv run python scripts/train.py "$CONFIG" \
     --exp-name="$EXP_NAME" \
     --seed="$SEED"
