@@ -27,7 +27,5 @@ uv run python 3dvision-experiments/convert_h5_to_lerobot.py \
     --task "put the object in the bowl" \
     --max-episodes 5
 
-echo "=== Computing norm stats ==="
-uv run scripts/compute_norm_stats.py --config-name pi05_egoverse
-
-echo "=== Done ==="
+echo "=== Conversion done. Run norm stats on login node (needs internet): ==="
+echo "HF_LEROBOT_HOME=/cluster/work/cvg/data/rytsui/lerobot uv run scripts/compute_norm_stats.py --config-name pi05_egoverse"
