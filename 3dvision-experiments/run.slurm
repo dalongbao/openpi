@@ -6,8 +6,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=16G
 #SBATCH --time=24:00:00
-#SBATCH --partition=gpuhe.24h
-#SBATCH --gpus=nvidia_geforce_rtx_4090:1
+#SBATCH --gpus=a100_80gb:1
 
 set -euo pipefail
 
