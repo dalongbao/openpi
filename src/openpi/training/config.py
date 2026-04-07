@@ -1003,10 +1003,8 @@ _CONFIGS = [
     ),
     #
     # Egoverse configs (3DV project — Franka + dexterous hand, Aria egocentric camera).
-    #
     TrainConfig(
         name="pi05_egoverse",
-        # LoRA finetuning — fits on ~24 GB (RTX 3090/4090).
         model=pi0_config.Pi0Config(
             pi05=True,
             action_horizon=10,
@@ -1027,31 +1025,12 @@ _CONFIGS = [
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=None,
-        weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/rytsui/pi05_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/rytsui/pi05_base_jax/params"),
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora",
         ).get_freeze_filter(),
-        num_train_steps=30_000,
-    ),
-    TrainConfig(
-        name="pi05_egoverse_full",
-        model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
-        data=LeRobotEgoverseDataConfig(
-            repo_id="egoverse/all",
-            base_config=DataConfig(prompt_from_task=True),
-        ),
-        batch_size=256,
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=10_000,
-            peak_lr=5e-5,
-            decay_steps=1_000_000,
-            decay_lr=5e-5,
-        ),
-        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
-        ema_decay=0.999,
-        weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/rytsui/pi05_base/params"),
         num_train_steps=30_000,
     ),
     # RoboArena & PolaRiS configs.
