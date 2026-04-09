@@ -11,6 +11,7 @@ Usage:
       --num-frames 16
 """
 
+import dataclasses
 import pathlib
 
 import h5py
@@ -58,6 +59,21 @@ def main(
             else CHECKPOINT_DIR_PUBLIC
         )
     cfg = _config.get_config(CONFIG_NAME)
+
+    # The training config specifies LoRA variants (gemma_2b_lora, gemma_300m_lora),
+    # which add lora_a/lora_b matrices to the model structure. The base checkpoint
+    # has no LoRA matrices, so loading it into the LoRA model fails a strict shape
+    # check. For the baseline we swap to non-LoRA variants — the backbone weights
+    # are identical, and since LoRA adapters init to zero anyway the two models
+    # are numerically equivalent at step 0.
+    cfg = dataclasses.replace(
+        cfg,
+        model=dataclasses.replace(
+            cfg.model,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+    )
 
     # Norm stats live under <assets_dirs>/<repo_id>, written by
     # `scripts/compute_norm_stats.py --config-name pi05_egoverse`.
