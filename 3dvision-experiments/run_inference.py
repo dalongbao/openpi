@@ -1,14 +1,26 @@
 """Baseline inference for pi0.5 on Egoverse h5 episodes.
 
-Loads the pre-trained pi0.5 base weights (the same ones `pi05_egoverse` finetunes
-from), applies the Egoverse transforms and norm stats, and runs the policy on
-real frames sampled from an h5 file. Prints predicted vs. ground-truth actions
-so you get a quantitative baseline number.
+Loads pi0.5 base weights (what `pi05_egoverse` finetunes from), runs on real
+frames from one or more h5 episodes, and compares pi0.5's first-step prediction
+to ground truth. Also reports two naive baselines for calibration:
 
-Usage:
+  - zero_action: predict all-zeros (unnormalized). This is ~variance of the
+    action distribution around zero.
+  - const_state: predict current state (qpos) as next action. For slow
+    manipulation this is a strong "do nothing" baseline.
+
+Per-dim MSE is printed so you can see which joints dominate the error.
+
+Usage (single episode, every 10th frame):
   uv run python 3dvision-experiments/run_inference.py \
-      --h5-path /cluster/work/cvg/data/rytsui/egoverse_h5/<some>.h5 \
-      --num-frames 16
+      --h5-path /path/to/episode.h5 --frame-stride 10
+
+Usage (all episodes in a directory, every 10th frame each):
+  uv run python 3dvision-experiments/run_inference.py \
+      --episodes-dir /path/to/dir --frame-stride 10
+
+`--num-frames` limits how many frames per episode (default: all). Use
+`--num-frames 8` for a quick smoke test.
 """
 
 import dataclasses
@@ -23,49 +35,111 @@ from openpi.shared import normalize
 from openpi.training import config as _config
 
 CONFIG_NAME = "pi05_egoverse"
-# On the cluster the base weights are mirrored locally; off-cluster we pull from
-# the public GCS bucket (cached under ~/.cache/openpi after the first download).
 CHECKPOINT_DIR_CLUSTER = "/cluster/work/cvg/data/Egoverse/pi05_base_jax"
 CHECKPOINT_DIR_PUBLIC = "gs://openpi-assets/checkpoints/pi05_base"
 DEFAULT_PROMPT = "put the object in the bowl"
 
+ARM_DIM = 7
+HAND_DIM = 17
+ACTION_DIM = ARM_DIM + HAND_DIM  # 24
 
-def load_frame(h5_path: pathlib.Path, frame_idx: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+def load_frame(h5: h5py.File, frame_idx: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return (image[HWC uint8], state[24], gt_actions[24]) for a single frame."""
-    with h5py.File(h5_path, "r") as f:
-        image = np.asarray(f["observations/images/aria_rgb_cam/color"][frame_idx])
-        state = np.concatenate(
-            [f["observations/qpos_arm"][frame_idx], f["observations/qpos_hand"][frame_idx]]
-        ).astype(np.float32)
-        actions = np.concatenate(
-            [f["actions_arm"][frame_idx], f["actions_hand"][frame_idx]]
-        ).astype(np.float32)
+    image = np.asarray(h5["observations/images/aria_rgb_cam/color"][frame_idx])
+    state = np.concatenate(
+        [h5["observations/qpos_arm"][frame_idx], h5["observations/qpos_hand"][frame_idx]]
+    ).astype(np.float32)
+    actions = np.concatenate(
+        [h5["actions_arm"][frame_idx], h5["actions_hand"][frame_idx]]
+    ).astype(np.float32)
     return image, state, actions
 
 
-def main(
+def evaluate_episode(
+    policy,
     h5_path: pathlib.Path,
+    num_frames: int | None,
+    frame_stride: int,
+    start_frame: int,
+    prompt: str,
+) -> dict:
+    """Run inference over one episode and return squared-error tensors.
+
+    Returns a dict with per-frame arrays of shape (N, 24):
+      - pi0_sq_err:   (pi0 pred - gt) ** 2
+      - zero_sq_err:  (0 - gt) ** 2
+      - const_sq_err: (state - gt) ** 2
+    """
+    with h5py.File(h5_path, "r") as f:
+        total = f["observations/qpos_arm"].shape[0]
+        end = total if num_frames is None else min(total, start_frame + num_frames * frame_stride)
+        frame_ids = list(range(start_frame, end, frame_stride))
+        print(f"  episode={h5_path.name}  total={total}  evaluating={len(frame_ids)} frames")
+
+        pi0_sq = np.zeros((len(frame_ids), ACTION_DIM), dtype=np.float32)
+        zero_sq = np.zeros_like(pi0_sq)
+        const_sq = np.zeros_like(pi0_sq)
+
+        for i, idx in enumerate(frame_ids):
+            image, state, gt = load_frame(f, idx)
+            result = policy.infer(
+                {"observation/image": image, "observation/state": state, "prompt": prompt}
+            )
+            pred = np.asarray(result["actions"])[0]  # first predicted step, (24,)
+            pi0_sq[i] = (pred - gt) ** 2
+            zero_sq[i] = gt**2
+            const_sq[i] = (state - gt) ** 2
+
+            if i % 50 == 0 or i == len(frame_ids) - 1:
+                print(
+                    f"    frame {i + 1}/{len(frame_ids)}  "
+                    f"arm_mse={pi0_sq[i, :ARM_DIM].mean():.4f}  "
+                    f"hand_mse={pi0_sq[i, ARM_DIM:].mean():.4f}"
+                )
+
+    return {"pi0": pi0_sq, "zero": zero_sq, "const": const_sq}
+
+
+def summarize(name: str, sq_err: np.ndarray) -> None:
+    """Print overall + arm/hand split + per-dim breakdown for one method."""
+    arm = sq_err[:, :ARM_DIM].mean()
+    hand = sq_err[:, ARM_DIM:].mean()
+    total = sq_err.mean()
+    print(f"  {name:>12s}:  arm={arm:.4f}  hand={hand:.4f}  total={total:.4f}")
+
+
+def print_per_dim(sq_err: np.ndarray, label: str) -> None:
+    per_dim = sq_err.mean(axis=0)
+    print(f"  {label} per-dim MSE:")
+    print(f"    arm  (dims 0-6):   " + " ".join(f"{v:.3f}" for v in per_dim[:ARM_DIM]))
+    print(f"    hand (dims 7-23):  " + " ".join(f"{v:.3f}" for v in per_dim[ARM_DIM:]))
+
+
+def main(
     *,
-    num_frames: int = 8,
-    frame_stride: int = 50,
+    h5_path: pathlib.Path | None = None,
+    episodes_dir: pathlib.Path | None = None,
+    num_frames: int | None = None,
+    frame_stride: int = 10,
     start_frame: int = 0,
     prompt: str = DEFAULT_PROMPT,
     checkpoint_dir: str | None = None,
 ) -> None:
+    if (h5_path is None) == (episodes_dir is None):
+        raise ValueError("Pass exactly one of --h5-path or --episodes-dir.")
+
     if checkpoint_dir is None:
         checkpoint_dir = (
             CHECKPOINT_DIR_CLUSTER
             if pathlib.Path(CHECKPOINT_DIR_CLUSTER).exists()
             else CHECKPOINT_DIR_PUBLIC
         )
-    cfg = _config.get_config(CONFIG_NAME)
 
-    # The training config specifies LoRA variants (gemma_2b_lora, gemma_300m_lora),
-    # which add lora_a/lora_b matrices to the model structure. The base checkpoint
-    # has no LoRA matrices, so loading it into the LoRA model fails a strict shape
-    # check. For the baseline we swap to non-LoRA variants — the backbone weights
-    # are identical, and since LoRA adapters init to zero anyway the two models
-    # are numerically equivalent at step 0.
+    cfg = _config.get_config(CONFIG_NAME)
+    # Swap LoRA variants -> plain gemma so the base checkpoint loads cleanly.
+    # LoRA adapters init to zero, so the two models are numerically equivalent
+    # at step 0; this just avoids the structural mismatch in `restore_params`.
     cfg = dataclasses.replace(
         cfg,
         model=dataclasses.replace(
@@ -75,8 +149,6 @@ def main(
         ),
     )
 
-    # Norm stats live under <assets_dirs>/<repo_id>, written by
-    # `scripts/compute_norm_stats.py --config-name pi05_egoverse`.
     data_cfg = cfg.data.create(cfg.assets_dirs, cfg.model)
     norm_stats_dir = cfg.assets_dirs / data_cfg.repo_id
     print(f"Loading norm stats from: {norm_stats_dir}")
@@ -90,37 +162,35 @@ def main(
         default_prompt=prompt,
     )
 
-    with h5py.File(h5_path, "r") as f:
-        total = f["observations/qpos_arm"].shape[0]
-    frame_ids = list(range(start_frame, min(total, start_frame + num_frames * frame_stride), frame_stride))
-    print(f"Running inference on {len(frame_ids)} frames from {h5_path.name} (total={total})")
+    if h5_path is not None:
+        episode_paths = [h5_path]
+    else:
+        episode_paths = sorted(pathlib.Path(episodes_dir).glob("*.h5"))
+        if not episode_paths:
+            raise ValueError(f"No .h5 files found in {episodes_dir}")
+        print(f"Found {len(episode_paths)} episodes in {episodes_dir}")
 
-    arm_mses, hand_mses = [], []
-    for idx in frame_ids:
-        image, state, gt_actions = load_frame(h5_path, idx)
-        example = {
-            "observation/image": image,
-            "observation/state": state,
-            "prompt": prompt,
-        }
-        result = policy.infer(example)
-        pred = np.asarray(result["actions"])  # shape: (action_horizon, 24)
+    # Accumulate squared errors across all episodes.
+    all_pi0, all_zero, all_const = [], [], []
+    for ep_path in episode_paths:
+        stats = evaluate_episode(policy, ep_path, num_frames, frame_stride, start_frame, prompt)
+        all_pi0.append(stats["pi0"])
+        all_zero.append(stats["zero"])
+        all_const.append(stats["const"])
 
-        # Ground truth is a single step; compare against the first predicted step.
-        pred_t0 = pred[0]
-        arm_mse = float(np.mean((pred_t0[:7] - gt_actions[:7]) ** 2))
-        hand_mse = float(np.mean((pred_t0[7:] - gt_actions[7:]) ** 2))
-        arm_mses.append(arm_mse)
-        hand_mses.append(hand_mse)
-        print(
-            f"  frame={idx:5d}  pred_shape={tuple(pred.shape)}  "
-            f"arm_mse={arm_mse:.4f}  hand_mse={hand_mse:.4f}"
-        )
+    pi0_sq = np.concatenate(all_pi0, axis=0)
+    zero_sq = np.concatenate(all_zero, axis=0)
+    const_sq = np.concatenate(all_const, axis=0)
 
-    print("\n=== Baseline summary (pi0.5 base, no finetuning) ===")
-    print(f"  frames evaluated : {len(frame_ids)}")
-    print(f"  mean arm MSE     : {np.mean(arm_mses):.4f}")
-    print(f"  mean hand MSE    : {np.mean(hand_mses):.4f}")
+    print("\n=== Summary ===")
+    print(f"  episodes evaluated: {len(episode_paths)}")
+    print(f"  frames evaluated:   {pi0_sq.shape[0]}")
+    print()
+    summarize("pi0.5 base", pi0_sq)
+    summarize("zero action", zero_sq)
+    summarize("const state", const_sq)
+    print()
+    print_per_dim(pi0_sq, "pi0.5 base")
 
 
 if __name__ == "__main__":
