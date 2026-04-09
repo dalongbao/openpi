@@ -1,5 +1,11 @@
 # 3DV Project: Fine-Tuning pi0.5 on Egoverse Data
 
+## Output style
+
+- **All shell commands on a single line** (`&&` to chain). No multi-line code blocks for copy-paste commands.
+- Be concise. No preamble, no restating.
+
+
 ## Quick Start (ETH Euler Cluster)
 
 ### 1. Clone and install
@@ -64,9 +70,19 @@ Per-user paths (checkpoints, experiments):
 - `3dvision-experiments/convert_h5_to_lerobot.py` — converts Egoverse h5 to LeRobot v2 format
 - `3dvision-experiments/convert_data.slurm` — SLURM job for data conversion
 - `3dvision-experiments/run.slurm` — SLURM wrapper for training
+- `3dvision-experiments/run_inference.py` — baseline inference on real h5 frames (pretrained pi0.5, no finetuning); loads base weights + egoverse norm stats, reports arm/hand MSE vs GT
+- `3dvision-experiments/run_inference.slurm` — SLURM wrapper for baseline inference
 - `3dvision-experiments/NOTES.md` — detailed setup log
 - `src/openpi/policies/egoverse_policy.py` — EgoverseInputs/EgoverseOutputs data transforms
 - `src/openpi/training/config.py` — added `LeRobotEgoverseDataConfig` and `pi05_egoverse` config
+
+## Baseline Inference
+
+Submit: `sbatch --time=01:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=1 3dvision-experiments/run_inference.slurm`
+
+Custom args: `sbatch ... 3dvision-experiments/run_inference.slurm <h5_path> <num_frames> <frame_stride>`
+
+Loads `pi05_base_jax` into the `pi05_egoverse` config (LoRA adapters init to zero → functionally base model), runs on real frames from an h5 file, reports arm/hand MSE vs ground truth. First call = 2–5 min JIT compile; later frames fast.
 
 ## Converting More Data
 

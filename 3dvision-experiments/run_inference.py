@@ -24,7 +24,7 @@ from openpi.training import config as _config
 CONFIG_NAME = "pi05_egoverse"
 # On the cluster the base weights are mirrored locally; off-cluster we pull from
 # the public GCS bucket (cached under ~/.cache/openpi after the first download).
-CHECKPOINT_DIR_CLUSTER = "/cluster/work/cvg/data/rytsui/pi05_base_jax"
+CHECKPOINT_DIR_CLUSTER = "/cluster/work/cvg/data/Egoverse/pi05_base_jax"
 CHECKPOINT_DIR_PUBLIC = "gs://openpi-assets/checkpoints/pi05_base"
 DEFAULT_PROMPT = "put the object in the bowl"
 
