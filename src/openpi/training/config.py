@@ -1025,12 +1025,14 @@ _CONFIGS = [
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=None,
-        weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/rytsui/pi05_base_jax/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora",
         ).get_freeze_filter(),
+        save_interval=5_000,
+        keep_period=10_000,
         num_train_steps=30_000,
     ),
     # RoboArena & PolaRiS configs.
