@@ -1,12 +1,16 @@
 """Visualize pi0.5 predicted action chunks vs ground truth.
 
-For a handful of frames spread across an episode, plots the full 10-step
-predicted action chunk against the next 10 ground-truth actions.  Produces
-one figure per sampled frame with arm and hand subplots.
+Picks frames from one or more episodes, runs inference, and plots the full
+10-step predicted action chunk against the next 10 ground-truth actions.
+Produces one PNG per sampled frame with arm and hand subplots.
 
-Usage:
+Usage (single episode, 5 frames):
   uv run python 3dvision-experiments/visualize_predictions.py \
       --h5-path /path/to/episode.h5 --num-vis-frames 5 --out-dir plots/
+
+Usage (1 frame from each of 5 episodes):
+  uv run python 3dvision-experiments/visualize_predictions.py \
+      --episodes-dir /path/to/dir --num-episodes 5 --num-vis-frames 1 --out-dir plots/
 """
 
 import dataclasses
@@ -113,23 +117,23 @@ def plot_chunk(
     print(f"  saved {out_path}")
 
 
-def main(
-    *,
+def visualize_episode(
+    policy,
     h5_path: pathlib.Path,
-    num_vis_frames: int = 5,
-    out_dir: pathlib.Path = pathlib.Path("plots"),
-    checkpoint_dir: str | None = None,
-    prompt: str = DEFAULT_PROMPT,
-) -> None:
-    policy = load_policy(checkpoint_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+    num_vis_frames: int,
+    out_dir: pathlib.Path,
+    prompt: str,
+) -> int:
+    """Visualize num_vis_frames from one episode. Returns number of plots saved."""
+    saved = 0
     with h5py.File(h5_path, "r") as f:
         total = f["observations/qpos_arm"].shape[0]
-        # Pick frames evenly spread, leaving room for a full chunk at the end.
         max_start = total - CHUNK_LEN
+        if max_start < 0:
+            print(f"  skipping {h5_path.name}: too short ({total} frames)")
+            return 0
         frame_ids = np.linspace(0, max_start, num_vis_frames, dtype=int).tolist()
-        print(f"Episode: {h5_path.name}  total_frames={total}  visualizing frames: {frame_ids}")
+        print(f"  episode={h5_path.name}  total={total}  frames: {frame_ids}")
 
         for idx in frame_ids:
             image = np.asarray(f["observations/images/aria_rgb_cam/color"][idx])
@@ -144,13 +148,47 @@ def main(
 
             gt = get_gt_chunk(f, idx)
             if gt is None:
-                print(f"  skipping frame {idx}: not enough frames for GT chunk")
+                print(f"    skipping frame {idx}: not enough frames for GT chunk")
                 continue
 
             ep_name = h5_path.stem
             plot_chunk(pred, gt, idx, out_dir / f"{ep_name}_frame{idx:05d}.png")
+            saved += 1
+    return saved
 
-    print(f"\nDone. {num_vis_frames} plots saved to {out_dir}/")
+
+def main(
+    *,
+    h5_path: pathlib.Path | None = None,
+    episodes_dir: pathlib.Path | None = None,
+    num_episodes: int = 5,
+    num_vis_frames: int = 1,
+    out_dir: pathlib.Path = pathlib.Path("plots"),
+    checkpoint_dir: str | None = None,
+    prompt: str = DEFAULT_PROMPT,
+) -> None:
+    if (h5_path is None) == (episodes_dir is None):
+        raise ValueError("Pass exactly one of --h5-path or --episodes-dir.")
+
+    policy = load_policy(checkpoint_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if h5_path is not None:
+        episode_paths = [h5_path]
+    else:
+        all_eps = sorted(pathlib.Path(episodes_dir).glob("*.h5"))
+        if not all_eps:
+            raise ValueError(f"No .h5 files found in {episodes_dir}")
+        # Evenly sample num_episodes from the directory.
+        indices = np.linspace(0, len(all_eps) - 1, min(num_episodes, len(all_eps)), dtype=int)
+        episode_paths = [all_eps[i] for i in indices]
+        print(f"Found {len(all_eps)} episodes, sampling {len(episode_paths)}")
+
+    total_plots = 0
+    for ep_path in episode_paths:
+        total_plots += visualize_episode(policy, ep_path, num_vis_frames, out_dir, prompt)
+
+    print(f"\nDone. {total_plots} plots saved to {out_dir}/")
 
 
 if __name__ == "__main__":
