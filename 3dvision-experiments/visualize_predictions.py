@@ -35,6 +35,9 @@ HAND_DIM = 17
 ACTION_DIM = ARM_DIM + HAND_DIM
 CHUNK_LEN = 10
 
+ARM_LABELS = ["joint_0", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
+HAND_LABELS = [f"hand_{i}" for i in range(HAND_DIM)]
+
 
 def load_policy(checkpoint_dir: str | None):
     if checkpoint_dir is None:
@@ -83,32 +86,35 @@ def plot_chunk(
     gt: np.ndarray,
     frame_idx: int,
     out_path: pathlib.Path,
+    ep_name: str = "",
 ) -> None:
-    """Plot predicted vs GT action chunk. pred and gt are (CHUNK_LEN, ACTION_DIM)."""
+    """Plot predicted vs GT action chunk. Two panels (arm/hand), one color per dim."""
     steps = np.arange(CHUNK_LEN)
+    arm_colors = plt.cm.tab10(np.linspace(0, 1, ARM_DIM))
+    hand_colors = plt.cm.tab20(np.linspace(0, 1, HAND_DIM))
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    fig.suptitle(f"Frame {frame_idx}: predicted (blue) vs GT (orange) action chunk", fontsize=13)
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+    fig.suptitle(f"{ep_name}  frame {frame_idx}:  solid=pred  dashed=GT", fontsize=13)
 
-    # Arm dims
+    # Arm
     ax = axes[0]
     for d in range(ARM_DIM):
-        ax.plot(steps, pred[:, d], color="tab:blue", alpha=0.7, label="pred" if d == 0 else None)
-        ax.plot(steps, gt[:, d], color="tab:orange", alpha=0.7, linestyle="--", label="GT" if d == 0 else None)
+        ax.plot(steps, pred[:, d], color=arm_colors[d], linewidth=1.5, label=f"{ARM_LABELS[d]} pred")
+        ax.plot(steps, gt[:, d], color=arm_colors[d], linewidth=1.5, linestyle="--", label=f"{ARM_LABELS[d]} GT")
     ax.set_ylabel("Joint value")
     ax.set_title(f"Arm (dims 0-{ARM_DIM - 1})")
-    ax.legend()
+    ax.legend(fontsize=7, ncol=ARM_DIM, loc="upper right")
     ax.grid(True, alpha=0.3)
 
-    # Hand dims
+    # Hand
     ax = axes[1]
-    for d in range(ARM_DIM, ACTION_DIM):
-        ax.plot(steps, pred[:, d], color="tab:blue", alpha=0.7, label="pred" if d == ARM_DIM else None)
-        ax.plot(steps, gt[:, d], color="tab:orange", alpha=0.7, linestyle="--", label="GT" if d == ARM_DIM else None)
+    for d in range(HAND_DIM):
+        ax.plot(steps, pred[:, ARM_DIM + d], color=hand_colors[d], linewidth=1.5, label=f"{HAND_LABELS[d]} pred")
+        ax.plot(steps, gt[:, ARM_DIM + d], color=hand_colors[d], linewidth=1.5, linestyle="--", label=f"{HAND_LABELS[d]} GT")
     ax.set_ylabel("Joint value")
     ax.set_xlabel("Chunk step (0 = current frame)")
     ax.set_title(f"Hand (dims {ARM_DIM}-{ACTION_DIM - 1})")
-    ax.legend()
+    ax.legend(fontsize=6, ncol=6, loc="upper right")
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -152,7 +158,7 @@ def visualize_episode(
                 continue
 
             ep_name = h5_path.stem
-            plot_chunk(pred, gt, idx, out_dir / f"{ep_name}_frame{idx:05d}.png")
+            plot_chunk(pred, gt, idx, out_dir / f"{ep_name}_frame{idx:05d}.png", ep_name=ep_name)
             saved += 1
     return saved
 
@@ -162,7 +168,7 @@ def main(
     h5_path: pathlib.Path | None = None,
     episodes_dir: pathlib.Path | None = None,
     num_episodes: int = 5,
-    num_vis_frames: int = 1,
+    num_vis_frames: int = 3,
     out_dir: pathlib.Path = pathlib.Path("plots"),
     checkpoint_dir: str | None = None,
     prompt: str = DEFAULT_PROMPT,
