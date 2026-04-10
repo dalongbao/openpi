@@ -197,18 +197,25 @@ def main(
 
     # Accumulate squared errors across all episodes.
     all_pi0, all_zero, all_const = [], [], []
+    skipped = []
     for ep_path in episode_paths:
-        stats = evaluate_episode(policy, ep_path, num_frames, frame_stride, start_frame, prompt)
-        all_pi0.append(stats["pi0"])
-        all_zero.append(stats["zero"])
-        all_const.append(stats["const"])
+        try:
+            stats = evaluate_episode(policy, ep_path, num_frames, frame_stride, start_frame, prompt)
+            all_pi0.append(stats["pi0"])
+            all_zero.append(stats["zero"])
+            all_const.append(stats["const"])
+        except Exception as e:
+            print(f"  ERROR in {ep_path.name}: {e} — skipping")
+            skipped.append(ep_path.name)
 
     pi0_sq = np.concatenate(all_pi0, axis=0)
     zero_sq = np.concatenate(all_zero, axis=0)
     const_sq = np.concatenate(all_const, axis=0)
 
     print("\n=== Summary ===")
-    print(f"  episodes evaluated: {len(episode_paths)}")
+    print(f"  episodes evaluated: {len(episode_paths) - len(skipped)}/{len(episode_paths)}")
+    if skipped:
+        print(f"  skipped: {skipped}")
     print(f"  total steps evaluated: {pi0_sq.shape[0]}  ({pi0_sq.shape[0] // CHUNK_LEN} chunks of {CHUNK_LEN})")
     print()
     summarize("pi0.5 base", pi0_sq)
