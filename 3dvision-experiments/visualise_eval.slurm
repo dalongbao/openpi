@@ -14,4 +14,4 @@ echo "Node: $(hostname)"
 echo "Date: $(date)"
 echo "Args: $*"
 
-uv run python 3dvision-experiments/visualize_predictions.py "$@"
+uv run python 3dvision-experiments/visualise_eval.py "$@"
