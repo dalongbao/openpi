@@ -44,16 +44,29 @@ HAND_DIM = 17
 ACTION_DIM = ARM_DIM + HAND_DIM  # 24
 
 
-def load_frame(h5: h5py.File, frame_idx: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (image[HWC uint8], state[24], gt_actions[24]) for a single frame."""
+CHUNK_LEN = 10
+
+
+def load_frame(h5: h5py.File, frame_idx: int) -> tuple[np.ndarray, np.ndarray]:
+    """Return (image[HWC uint8], state[24]) for a single frame."""
     image = np.asarray(h5["observations/images/aria_rgb_cam/color"][frame_idx])
     state = np.concatenate(
         [h5["observations/qpos_arm"][frame_idx], h5["observations/qpos_hand"][frame_idx]]
     ).astype(np.float32)
-    actions = np.concatenate(
-        [h5["actions_arm"][frame_idx], h5["actions_hand"][frame_idx]]
-    ).astype(np.float32)
-    return image, state, actions
+    return image, state
+
+
+def load_gt_chunk(h5: h5py.File, frame_idx: int) -> np.ndarray | None:
+    """Return GT actions for frames [frame_idx, frame_idx+CHUNK_LEN), shape (CHUNK_LEN, 24).
+
+    Returns None if not enough frames remain.
+    """
+    total = h5["actions_arm"].shape[0]
+    if frame_idx + CHUNK_LEN > total:
+        return None
+    arm = np.asarray(h5["actions_arm"][frame_idx : frame_idx + CHUNK_LEN])
+    hand = np.asarray(h5["actions_hand"][frame_idx : frame_idx + CHUNK_LEN])
+    return np.concatenate([arm, hand], axis=1).astype(np.float32)
 
 
 def evaluate_episode(
@@ -66,39 +79,51 @@ def evaluate_episode(
 ) -> dict:
     """Run inference over one episode and return squared-error tensors.
 
-    Returns a dict with per-frame arrays of shape (N, 24):
+    At each sampled frame, the model predicts a full CHUNK_LEN-step action chunk.
+    All steps in the chunk are evaluated against the corresponding GT actions.
+
+    Returns a dict with arrays of shape (N * CHUNK_LEN, 24):
       - pi0_sq_err:   (pi0 pred - gt) ** 2
       - zero_sq_err:  (0 - gt) ** 2
-      - const_sq_err: (state - gt) ** 2
+      - const_sq_err: (state - gt) ** 2  (state is broadcast across the chunk)
     """
     with h5py.File(h5_path, "r") as f:
         total = f["observations/qpos_arm"].shape[0]
         end = total if num_frames is None else min(total, start_frame + num_frames * frame_stride)
         frame_ids = list(range(start_frame, end, frame_stride))
-        print(f"  episode={h5_path.name}  total={total}  evaluating={len(frame_ids)} frames")
+        print(f"  episode={h5_path.name}  total={total}  evaluating={len(frame_ids)} chunks of {CHUNK_LEN} steps")
 
-        pi0_sq = np.zeros((len(frame_ids), ACTION_DIM), dtype=np.float32)
-        zero_sq = np.zeros_like(pi0_sq)
-        const_sq = np.zeros_like(pi0_sq)
+        all_pi0_sq, all_zero_sq, all_const_sq = [], [], []
 
         for i, idx in enumerate(frame_ids):
-            image, state, gt = load_frame(f, idx)
+            gt_chunk = load_gt_chunk(f, idx)
+            if gt_chunk is None:
+                break  # not enough frames for a full chunk
+
+            image, state = load_frame(f, idx)
             result = policy.infer(
                 {"observation/image": image, "observation/state": state, "prompt": prompt}
             )
-            pred = np.asarray(result["actions"])[0]  # first predicted step, (24,)
-            pi0_sq[i] = (pred - gt) ** 2
-            zero_sq[i] = gt**2
-            const_sq[i] = (state - gt) ** 2
+            pred = np.asarray(result["actions"])[:CHUNK_LEN]  # (CHUNK_LEN, 24)
+
+            all_pi0_sq.append((pred - gt_chunk) ** 2)
+            all_zero_sq.append(gt_chunk ** 2)
+            # state broadcast: "do nothing" baseline predicts current state for all 10 steps
+            all_const_sq.append((state[None, :] - gt_chunk) ** 2)
 
             if i % 50 == 0 or i == len(frame_ids) - 1:
+                chunk_arm = all_pi0_sq[-1][:, :ARM_DIM].mean()
+                chunk_hand = all_pi0_sq[-1][:, ARM_DIM:].mean()
                 print(
-                    f"    frame {i + 1}/{len(frame_ids)}  "
-                    f"arm_mse={pi0_sq[i, :ARM_DIM].mean():.4f}  "
-                    f"hand_mse={pi0_sq[i, ARM_DIM:].mean():.4f}"
+                    f"    chunk {i + 1}/{len(frame_ids)}  frame={idx}  "
+                    f"arm_mse={chunk_arm:.4f}  hand_mse={chunk_hand:.4f}"
                 )
 
-    return {"pi0": pi0_sq, "zero": zero_sq, "const": const_sq}
+    return {
+        "pi0": np.concatenate(all_pi0_sq, axis=0),
+        "zero": np.concatenate(all_zero_sq, axis=0),
+        "const": np.concatenate(all_const_sq, axis=0),
+    }
 
 
 def summarize(name: str, sq_err: np.ndarray) -> None:
@@ -184,7 +209,7 @@ def main(
 
     print("\n=== Summary ===")
     print(f"  episodes evaluated: {len(episode_paths)}")
-    print(f"  frames evaluated:   {pi0_sq.shape[0]}")
+    print(f"  total steps evaluated: {pi0_sq.shape[0]}  ({pi0_sq.shape[0] // CHUNK_LEN} chunks of {CHUNK_LEN})")
     print()
     summarize("pi0.5 base", pi0_sq)
     summarize("zero action", zero_sq)
