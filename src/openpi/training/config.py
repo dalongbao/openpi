@@ -1031,8 +1031,8 @@ _CONFIGS = [
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora",
         ).get_freeze_filter(),
-        save_interval=5_000,
-        keep_period=10_000,
+        save_interval=30_000,
+        keep_period=30_000,
         num_train_steps=30_000,
     ),
     # RoboArena & PolaRiS configs.
