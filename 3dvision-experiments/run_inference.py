@@ -49,7 +49,10 @@ CHUNK_LEN = 10
 
 def load_frame(h5: h5py.File, frame_idx: int) -> tuple[np.ndarray, np.ndarray]:
     """Return (image[HWC uint8], state[24]) for a single frame."""
-    image = np.asarray(h5["observations/images/aria_rgb_cam/color"][frame_idx])
+    img_ds = h5["observations/images/aria_rgb_cam/color"]
+    if frame_idx >= img_ds.shape[0]:
+        raise IndexError(f"frame_idx {frame_idx} >= image dataset length {img_ds.shape[0]}")
+    image = np.asarray(img_ds[frame_idx])
     state = np.concatenate(
         [h5["observations/qpos_arm"][frame_idx], h5["observations/qpos_hand"][frame_idx]]
     ).astype(np.float32)
@@ -204,7 +207,7 @@ def main(
             all_pi0.append(stats["pi0"])
             all_zero.append(stats["zero"])
             all_const.append(stats["const"])
-        except Exception as e:
+        except BaseException as e:
             print(f"  ERROR in {ep_path.name}: {e} — skipping")
             skipped.append(ep_path.name)
 
