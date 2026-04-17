@@ -153,6 +153,7 @@ def main(
     start_frame: int = 0,
     prompt: str = DEFAULT_PROMPT,
     checkpoint_dir: str | None = None,
+    finetuned: bool = False,
 ) -> None:
     if (h5_path is None) == (episodes_dir is None):
         raise ValueError("Pass exactly one of --h5-path or --episodes-dir.")
@@ -165,17 +166,18 @@ def main(
         )
 
     cfg = _config.get_config(CONFIG_NAME)
-    # Swap LoRA variants -> plain gemma so the base checkpoint loads cleanly.
-    # LoRA adapters init to zero, so the two models are numerically equivalent
-    # at step 0; this just avoids the structural mismatch in `restore_params`.
-    cfg = dataclasses.replace(
-        cfg,
-        model=dataclasses.replace(
-            cfg.model,
-            paligemma_variant="gemma_2b",
-            action_expert_variant="gemma_300m",
-        ),
-    )
+    if not finetuned:
+        # Swap LoRA variants -> plain gemma so the base checkpoint loads cleanly.
+        # LoRA adapters init to zero, so the two models are numerically equivalent
+        # at step 0; this just avoids the structural mismatch in `restore_params`.
+        cfg = dataclasses.replace(
+            cfg,
+            model=dataclasses.replace(
+                cfg.model,
+                paligemma_variant="gemma_2b",
+                action_expert_variant="gemma_300m",
+            ),
+        )
 
     data_cfg = cfg.data.create(cfg.assets_dirs, cfg.model)
     norm_stats_dir = cfg.assets_dirs / data_cfg.repo_id
@@ -221,11 +223,12 @@ def main(
         print(f"  skipped: {skipped}")
     print(f"  total steps evaluated: {pi0_sq.shape[0]}  ({pi0_sq.shape[0] // CHUNK_LEN} chunks of {CHUNK_LEN})")
     print()
-    summarize("pi0.5 base", pi0_sq)
+    label = "pi0.5 finetuned" if finetuned else "pi0.5 base"
+    summarize(label, pi0_sq)
     summarize("zero action", zero_sq)
     summarize("const state", const_sq)
     print()
-    print_per_dim(pi0_sq, "pi0.5 base")
+    print_per_dim(pi0_sq, label)
 
 
 if __name__ == "__main__":
