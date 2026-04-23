@@ -99,17 +99,12 @@ def main(
                         print(f"  {col}: type={type(val).__name__} val={val}")
 
             for i in range(n_frames):
-                # Image: may be stored as path string or encoded.
+                # Image: stored as dict with 'bytes' (PNG) and 'path' keys.
                 img_raw = table.column("observations.images.front_img_1")[i].as_py()
-                if isinstance(img_raw, str):
-                    # It's a path relative to the recording dir — read the actual image file.
+                if isinstance(img_raw, dict) and "bytes" in img_raw:
                     from PIL import Image
-                    img_path = rec_dir / img_raw
-                    img = np.array(Image.open(img_path).convert("RGB"))
-                elif isinstance(img_raw, dict) and "path" in img_raw:
-                    from PIL import Image
-                    img_path = rec_dir / img_raw["path"]
-                    img = np.array(Image.open(img_path).convert("RGB"))
+                    import io
+                    img = np.array(Image.open(io.BytesIO(img_raw["bytes"])).convert("RGB"))
                 elif isinstance(img_raw, bytes):
                     from PIL import Image
                     import io
