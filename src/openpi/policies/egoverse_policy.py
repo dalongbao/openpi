@@ -68,3 +68,52 @@ class EgoverseInputs(transforms.DataTransformFn):
 class EgoverseOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         return {"actions": np.asarray(data["actions"][:, :ACTION_DIM])}
+
+
+# --- Bimanual (bag_grocery): 2x6 cartesian EE pose, no hand joints ---
+
+BIMANUAL_ACTION_DIM = 12
+
+
+def make_egoverse_bimanual_example() -> dict:
+    return {
+        "observation/image": np.random.randint(256, size=(480, 640, 3), dtype=np.uint8),
+        "observation/state": np.random.rand(12).astype(np.float32),
+        "prompt": "bag the groceries",
+    }
+
+
+@dataclasses.dataclass(frozen=True)
+class EgoverseBimanualInputs(transforms.DataTransformFn):
+    model_type: _model.ModelType
+
+    def __call__(self, data: dict) -> dict:
+        base_image = _parse_image(data["observation/image"])
+
+        inputs = {
+            "state": data["observation/state"],
+            "image": {
+                "base_0_rgb": base_image,
+                "left_wrist_0_rgb": np.zeros_like(base_image),
+                "right_wrist_0_rgb": np.zeros_like(base_image),
+            },
+            "image_mask": {
+                "base_0_rgb": np.True_,
+                "left_wrist_0_rgb": np.False_,
+                "right_wrist_0_rgb": np.False_,
+            },
+        }
+
+        if "actions" in data:
+            inputs["actions"] = data["actions"]
+
+        if "prompt" in data:
+            inputs["prompt"] = data["prompt"]
+
+        return inputs
+
+
+@dataclasses.dataclass(frozen=True)
+class EgoverseBimanualOutputs(transforms.DataTransformFn):
+    def __call__(self, data: dict) -> dict:
+        return {"actions": np.asarray(data["actions"][:, :BIMANUAL_ACTION_DIM])}
