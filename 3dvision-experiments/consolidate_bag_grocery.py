@@ -88,13 +88,38 @@ def main(
             table = pq.read_table(pf)
             n_frames = len(table)
 
+            # Debug first frame of first file.
+            if total_episodes == 0 and pf == parquet_files[0]:
+                for col in table.column_names:
+                    val = table.column(col)[0].as_py()
+                    if isinstance(val, (list, np.ndarray)):
+                        arr = np.array(val)
+                        print(f"  {col}: type={type(val).__name__} arr.shape={arr.shape} arr.dtype={arr.dtype}")
+                    else:
+                        print(f"  {col}: type={type(val).__name__} val={val}")
+
             for i in range(n_frames):
-                # Image: stored as CHW, convert to HWC uint8.
-                img = np.array(table.column("observations.images.front_img_1")[i].as_py())
-                if img.ndim == 3 and img.shape[0] == 3:
-                    img = np.transpose(img, (1, 2, 0))
-                if np.issubdtype(img.dtype, np.floating):
-                    img = (img * 255).astype(np.uint8)
+                # Image: may be stored as path string or encoded.
+                img_raw = table.column("observations.images.front_img_1")[i].as_py()
+                if isinstance(img_raw, str):
+                    # It's a path relative to the recording dir — read the actual image file.
+                    from PIL import Image
+                    img_path = rec_dir / img_raw
+                    img = np.array(Image.open(img_path).convert("RGB"))
+                elif isinstance(img_raw, dict) and "path" in img_raw:
+                    from PIL import Image
+                    img_path = rec_dir / img_raw["path"]
+                    img = np.array(Image.open(img_path).convert("RGB"))
+                elif isinstance(img_raw, bytes):
+                    from PIL import Image
+                    import io
+                    img = np.array(Image.open(io.BytesIO(img_raw)).convert("RGB"))
+                else:
+                    img = np.array(img_raw)
+                    if img.ndim == 3 and img.shape[0] == 3:
+                        img = np.transpose(img, (1, 2, 0))
+                    if np.issubdtype(img.dtype, np.floating):
+                        img = (img * 255).astype(np.uint8)
 
                 # State: ee_pose [12].
                 state = np.array(table.column("observations.state.ee_pose")[i].as_py(), dtype=np.float32)
