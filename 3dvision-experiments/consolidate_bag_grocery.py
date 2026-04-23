@@ -19,7 +19,7 @@ import shutil
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+import pyarrow.parquet as pq
 from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME, LeRobotDataset
 from tqdm import tqdm
 import tyro
@@ -85,24 +85,22 @@ def main(
         parquet_files = sorted(chunk_dir.glob("*.parquet"))
 
         for pf in parquet_files:
-            df = pd.read_parquet(pf)
-            n_frames = len(df)
+            table = pq.read_table(pf)
+            n_frames = len(table)
 
             for i in range(n_frames):
-                row = df.iloc[i]
-
                 # Image: stored as CHW, convert to HWC uint8.
-                img = np.array(row["observations.images.front_img_1"])
-                if img.shape[0] == 3:
+                img = np.array(table.column("observations.images.front_img_1")[i].as_py())
+                if img.ndim == 3 and img.shape[0] == 3:
                     img = np.transpose(img, (1, 2, 0))
                 if np.issubdtype(img.dtype, np.floating):
                     img = (img * 255).astype(np.uint8)
 
                 # State: ee_pose [12].
-                state = np.array(row["observations.state.ee_pose"], dtype=np.float32)
+                state = np.array(table.column("observations.state.ee_pose")[i].as_py(), dtype=np.float32)
 
                 # Actions: prestacked [100, 12] -> take first action [12].
-                actions_chunk = np.array(row["actions_cartesian"])
+                actions_chunk = np.array(table.column("actions_cartesian")[i].as_py())
                 action = actions_chunk[0].astype(np.float32)
 
                 dataset.add_frame({
