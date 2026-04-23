@@ -112,8 +112,11 @@ def main(output: pathlib.Path, headless: bool = True) -> None:
     # TODO (next step): use Robot Assembler GUI to find the Franka flange →
     # ORCA base transform, then replace this with a FixedJoint so the hand
     # moves with the arm during eval.
-    add_reference_to_stage(usd_path=str(ORCA_USD), prim_path="/World/OrcaRight")
-    orca_xf = UsdGeom.Xformable(stage.GetPrimAtPath("/World/OrcaRight"))
+    # Wrap in a fresh Xform prim so we can set position without conflicting
+    # with the translate/orient/scale ops already in the ORCA USD.
+    orca_wrapper = UsdGeom.Xform.Define(stage, "/World/OrcaRight")
+    add_reference_to_stage(usd_path=str(ORCA_USD), prim_path="/World/OrcaRight/hand")
+    orca_xf = UsdGeom.Xformable(orca_wrapper.GetPrim())
     orca_xf.AddTranslateOp().Set(Gf.Vec3d(0.40, TABLE_H + 0.25, 0.0))
 
     # ── Bowl ──────────────────────────────────────────────────────────────────
