@@ -11,12 +11,14 @@ no smoke inference).
 """
 
 import argparse
+import dataclasses
 import pathlib
 import pprint
 
 import numpy as np
 
 from openpi.policies import egoverse_policy, policy_config
+from openpi.shared import normalize
 from openpi.training import config as _config
 
 
@@ -29,6 +31,8 @@ def main() -> None:
         help="Path to a checkpoint dir (…/<exp>/<step>). Omit to skip load + smoke test.",
     )
     parser.add_argument("--default-prompt", default="put the object in the bowl")
+    parser.add_argument("--finetuned", action="store_true",
+                        help="Set if checkpoint is a LoRA fine-tune (not the base weights).")
     args = parser.parse_args()
 
     print("=" * 72)
@@ -96,8 +100,27 @@ def main() -> None:
     print("=" * 72)
     print(f"LOADING CHECKPOINT: {ckpt}")
     print("=" * 72)
+
+    if not args.finetuned:
+        # Base checkpoint has no LoRA weights — swap variants to plain gemma so the
+        # structure check in restore_params passes. (Same approach as run_inference.py.)
+        cfg = dataclasses.replace(
+            cfg,
+            model=dataclasses.replace(
+                cfg.model,
+                paligemma_variant="gemma_2b",
+                action_expert_variant="gemma_300m",
+            ),
+        )
+        print("Using non-LoRA variants for base checkpoint load.")
+
+    data_cfg = cfg.data.create(cfg.assets_dirs, cfg.model)
+    norm_stats_dir = cfg.assets_dirs / data_cfg.repo_id
+    print(f"Loading norm stats from: {norm_stats_dir}")
+    norm_stats = normalize.load(norm_stats_dir)
+
     policy = policy_config.create_trained_policy(
-        cfg, str(ckpt), default_prompt=args.default_prompt
+        cfg, str(ckpt), norm_stats=norm_stats, default_prompt=args.default_prompt
     )
 
     print("policy.metadata:")
