@@ -85,7 +85,11 @@ def main(
         parquet_files = sorted(chunk_dir.glob("*.parquet"))
 
         for pf in parquet_files:
-            table = pq.read_table(pf)
+            try:
+                table = pq.read_table(pf)
+            except Exception as e:
+                print(f"\n  Skipping corrupt file {pf}: {e}")
+                continue
             n_frames = len(table)
 
             # Debug first frame of first file.
