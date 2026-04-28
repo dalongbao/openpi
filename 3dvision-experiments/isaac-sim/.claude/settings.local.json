@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"C:\\\\Users\\\\doman\\\\Documents\\\\openpi\" diff HEAD -- 3dvision-experiments/isaac-sim/isaac_sim_setup.md)"
+    ]
+  }
+}

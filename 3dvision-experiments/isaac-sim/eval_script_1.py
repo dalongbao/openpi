@@ -17,6 +17,7 @@ simulation_app = SimulationApp(CONFIG)
 # ======================================================
 
 # NOW the rest of the imports are safe
+import dataclasses
 import os
 import sys
 import csv
@@ -35,7 +36,7 @@ from omni.isaac.sensor import Camera
 # --------------------------------------------------------------------
 # CONFIGURATION
 # --------------------------------------------------------------------
-USD_PATH       = "/workspace/franka_vla_env.usd"
+USD_PATH       = "/workspace/kitchen_scene_1.usd"
 CHECKPOINT_DIR = "/checkpoints/pi05_egoverse/test/29999"  # mounted via apptainer --bind
 RESULTS_CSV    = "/workspace/results.csv"
 
@@ -61,13 +62,22 @@ print(f"[init] device = {device}")
 sys.path.insert(0, "/workspace/openpi/src")
 
 try:
-    from openpi.policies.policy_config import create_trained_policy
+    from openpi.policies import policy_config
+    from openpi.shared import normalize
     from openpi.training import config as _config
 
-    # The config name must match what the checkpoint was trained with.
-    # 'pi05_egoverse' is a guess based on your path — adjust if different.
-    train_config = _config.get_config("pi05_egoverse")
-    policy = create_trained_policy(train_config, CHECKPOINT_DIR)
+    cfg = _config.get_config("pi05_egoverse")
+    # Override assets_base_dir so container finds norm stats at /workspace/openpi/assets/
+    cfg = dataclasses.replace(cfg, assets_base_dir="/workspace/openpi/assets")
+    data_cfg = cfg.data.create(cfg.assets_dirs, cfg.model)
+    norm_stats = normalize.load(cfg.assets_dirs / data_cfg.repo_id)
+
+    policy = policy_config.create_trained_policy(
+        cfg,
+        CHECKPOINT_DIR,
+        norm_stats=norm_stats,
+        default_prompt=LANGUAGE_COMMAND,
+    )
     print(f"[init] Loaded pi0.5 from {CHECKPOINT_DIR}")
 except Exception as e:
     print(f"[FATAL] Could not load policy: {e}")
@@ -112,21 +122,19 @@ for _ in range(15):
 # HELPERS
 # --------------------------------------------------------------------
 def prepare_image(raw_rgba):
-    """Isaac's (H,W,4) uint8 -> normalized (H,W,3) float32 numpy for pi0.5."""
+    """Isaac's (H,W,4) uint8 -> (H,W,3) uint8 for pi0.5 (policy normalizes internally)."""
     if raw_rgba is None or raw_rgba.size == 0:
         raise RuntimeError("Camera returned empty frame")
-    rgb = raw_rgba[:, :, :3].astype(np.float32) / 255.0
-    return rgb  # pi0.5's input pipeline usually handles the CHW conversion
+    return raw_rgba[:, :, :3]
 
 
-def build_observation(ext_img, wrist_img, joint_pos):
-    """Pack observations in the dict format pi0.5 expects."""
+def build_observation(ext_img_uint8, joint_pos):
+    """Pack observations in the flat-key format egoverse_policy expects."""
+    state = np.zeros(24, dtype=np.float32)
+    state[:7] = joint_pos[:7]  # arm joints; hand dims padded with zeros
     return {
-        "image": {
-            "base_0_rgb":  ext_img,       # external / third-person view
-            "wrist_0_rgb": wrist_img,     # wrist-mounted view
-        },
-        "state": joint_pos.astype(np.float32),
+        "observation/image": ext_img_uint8,
+        "observation/state": state,
         "prompt": LANGUAGE_COMMAND,
     }
 
@@ -158,16 +166,15 @@ try:
 
         # ---- LOOK ----
         ext_img   = prepare_image(external_cam.get_rgba())
-        wrist_img = prepare_image(wrist_cam.get_rgba())
         joint_pos = franka.get_joint_positions()
 
         # ---- THINK ----
         t0 = time.time()
         if last_action_chunk is None or chunk_idx >= len(last_action_chunk):
-            obs = build_observation(ext_img, wrist_img, joint_pos)
+            obs = build_observation(ext_img, joint_pos)
             with torch.no_grad():
                 result = policy.infer(obs)
-            # pi0.5 returns an action chunk; shape typically (H, action_dim)
+            # pi0.5 returns an action chunk; shape (horizon, 24) for egoverse
             last_action_chunk = np.asarray(result["actions"])
             chunk_idx = 0
 
@@ -176,10 +183,11 @@ try:
         infer_ms = (time.time() - t0) * 1000
 
         # ---- ACT ----
-        # pi0.5 for Franka usually outputs 8 values: 7 joint targets + 1 gripper
-        # IMPORTANT: check the first printed actions to confirm absolute vs delta
-        target_joints = action[:NUM_ARM_JOINTS]
-        gripper_cmd   = action[NUM_ARM_JOINTS] if len(action) > NUM_ARM_JOINTS else 0.0
+        # egoverse policy outputs 24 dims: 7 arm + 17 hand.
+        # Map to Franka's 9 DOF: use dims 0-6 for arm, collapse hand dims to gripper.
+        target_joints = action[:NUM_ARM_JOINTS]            # dims 0–6
+        hand_action   = action[NUM_ARM_JOINTS:]            # dims 7–23 (17 hand joints)
+        gripper_cmd   = float(np.mean(hand_action[:3]))   # average first 3 hand dims as open/close proxy
 
         # Assume absolute targets by default. If robot doesn't move, try delta:
         # target_joints = joint_pos[:NUM_ARM_JOINTS] + target_joints
