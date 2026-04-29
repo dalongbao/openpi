@@ -25,6 +25,7 @@ import time
 import traceback
 import numpy as np
 import torch
+import cv2
 
 from omni.isaac.core import World
 from omni.isaac.core.utils.stage import open_stage
@@ -39,6 +40,7 @@ from omni.isaac.sensor import Camera
 USD_PATH       = "/workspace/kitchen_scene_1.usd"
 CHECKPOINT_DIR = "/checkpoints/pi05_egoverse/test/29999"  # mounted via apptainer --bind
 RESULTS_CSV    = "/workspace/results.csv"
+VIDEO_PATH     = "/workspace/evaluation.mp4"
 
 # The actual language command the model receives
 LANGUAGE_COMMAND = "place the plate into the yellow crate"
@@ -60,6 +62,8 @@ print(f"[init] device = {device}")
 # NOTE: The exact import path depends on which pi0.5 codebase you pulled.
 # This uses the openpi convention. Adjust if your repo is different.
 sys.path.insert(0, "/workspace/openpi/src")
+sys.path.insert(0, "/workspace/openpi/packages/openpi-client/src")
+sys.path.insert(0, "/isaac_packages")
 
 try:
     from openpi.policies import policy_config
@@ -153,6 +157,13 @@ csv_file = open(RESULTS_CSV, "w", newline="")
 writer   = csv.writer(csv_file)
 writer.writerow(["step", "infer_ms"] + [f"j{i}" for i in range(9)])
 
+video_writer = cv2.VideoWriter(
+    VIDEO_PATH,
+    cv2.VideoWriter_fourcc(*"mp4v"),
+    50,  # fps matches 50Hz sim
+    CAMERA_RES,
+)
+
 last_action_chunk = None
 chunk_idx = 0
 
@@ -203,6 +214,9 @@ try:
         # ---- STEP ----
         world.step(render=True)
 
+        # ---- RECORD ----
+        video_writer.write(cv2.cvtColor(ext_img, cv2.COLOR_RGB2BGR))
+
         # ---- LOG ----
         writer.writerow([step, f"{infer_ms:.1f}"] + joint_pos.tolist())
         if step % 50 == 0:
@@ -216,5 +230,7 @@ except Exception as e:
 finally:
     print("[exit] Closing...")
     csv_file.close()
+    video_writer.release()
+    print(f"[exit] Video saved to {VIDEO_PATH}")
     simulation_app.close()
     print("[exit] Done.")
