@@ -1,5 +1,35 @@
 # 3DV Project: Fine-Tuning pi0.5 on Egoverse Data + Isaac Sim Evaluation
 
+## Project Overview
+
+We are fine-tuning **pi0.5** (a Vision-Language-Action model) on **Egoverse** robot demonstration data, then evaluating the trained model in simulation to measure whether it learned to perform the task.
+
+### The full pipeline
+
+1. **Fine-tune pi0.5** on Egoverse `object_in_bowl` demonstrations (done via JAX LoRA training on Euler).
+2. **Build a simulated test environment** in Isaac Sim on a local laptop — a 3D scene (`kitchen_scene_1.usd`) that replicates the real-world pi0.5 test setup: a Franka FR3 arm, a table, task objects (plate + yellow crate), and two cameras (external shoulder cam + wrist cam).
+3. **Write an evaluation script** (`eval_script_1.py`) that loads the trained checkpoint, runs the policy in a closed loop inside the simulation, and records what happens.
+4. **Run the sim eval on the Euler cluster** — the simulation is too heavy for a laptop, so we submit a SLURM job that spins up Isaac Sim inside an Apptainer container on a GPU node.
+5. **Save a video** (`evaluation.mp4`) of the robot attempting the task, plus a CSV of joint positions over time.
+6. **Download and review** the video manually to judge qualitatively whether the model is performing the task, then use the joint position data for quantitative benchmarking.
+
+### What "success" looks like
+
+- The robot moves purposefully toward the plate and attempts to grasp it.
+- It transports the plate toward the yellow crate.
+- Joint trajectories in `results.csv` show smooth, task-directed motion rather than random flailing.
+- Comparing against the baseline (untrained pi0.5) shows improvement after fine-tuning.
+
+### Current status (as of 2026-04-30)
+
+- Fine-tuning: checkpoint at step 29999 exists at `/cluster/work/cvg/data/rytsui/checkpoints/pi05_egoverse/test/29999`.
+- Scene: `kitchen_scene_1.usd` built and synced to Euler.
+- Eval script: written, handles policy loading, camera capture, action loop, video recording.
+- **In progress:** installing all Python dependencies (openpi packages) into Isaac Sim's Python 3.10 environment on Euler. The pip install command with correct proxy/version settings is the current step.
+- Not yet done: first successful end-to-end eval run.
+
+---
+
 ## Output style
 
 - **All shell commands on a single line** (`&&` to chain). No multi-line code blocks for copy-paste commands.
