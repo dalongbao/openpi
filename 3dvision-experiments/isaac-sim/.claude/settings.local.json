@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git -C \"C:\\\\Users\\\\doman\\\\Documents\\\\openpi\" diff HEAD -- 3dvision-experiments/isaac-sim/isaac_sim_setup.md)"
+      "Bash(git -C \"C:\\\\Users\\\\doman\\\\Documents\\\\openpi\" diff HEAD -- 3dvision-experiments/isaac-sim/isaac_sim_setup.md)",
+      "Bash(git -C \"C:/Users/doman/Documents/openpi\" add 3dvision-experiments/isaac-sim/eval_script_1.py)",
+      "Bash(git -C \"C:/Users/doman/Documents/openpi\" commit -m \"add openpi-client src path to sys.path\")",
+      "Bash(git -C \"C:/Users/doman/Documents/openpi\" push)",
+      "Bash(git -C \"C:/Users/doman/Documents/openpi\" pull --rebase)",
+      "Bash(git -C \"C:/Users/doman/Documents/openpi\" stash)",
+      "Bash(git -C \"C:/Users/doman/Documents/openpi\" stash pop)",
+      "Bash(git -C \"C:/Users/doman/Documents/openpi\" add CLAUDE.md)",
+      "Bash(git -C \"C:/Users/doman/Documents/openpi\" commit -m \"update CLAUDE.md with Isaac Sim eval setup, all gotchas, and current status\")",
+      "Bash(git -C \"C:/Users/doman/Documents/openpi\" commit -m \"add project overview and pipeline to CLAUDE.md\")"
     ]
   }
 }

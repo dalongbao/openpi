@@ -9,6 +9,7 @@
 
 export HTTP_PROXY=http://proxy.ethz.ch:3128
 export HTTPS_PROXY=http://proxy.ethz.ch:3128
+export PYTHONUNBUFFERED=1
 
 # Isaac Sim shader cache must go to scratch (can be up to 10 GB)
 export ISAAC_SIM_CACHE_DIR=/cluster/scratch/$USER/isaac_cache
@@ -17,9 +18,13 @@ mkdir -p "$ISAAC_SIM_CACHE_DIR"
 WORKSPACE=/cluster/scratch/$USER/pi0_test
 CHECKPOINTS=/cluster/work/cvg/data/rytsui/checkpoints
 
+mkdir -p "$ISAAC_SIM_CACHE_DIR/kit"
+
 apptainer exec --nv \
     --bind "$WORKSPACE":/workspace \
-    --bind "$HOME/openpi":/workspace/openpi \
+    --bind "/cluster/scratch/$USER/openpi":/workspace/openpi \
     --bind "$CHECKPOINTS":/checkpoints \
+    --bind "$ISAAC_SIM_CACHE_DIR/kit":/isaac-sim/kit/cache \
+    --bind "/cluster/scratch/$USER/isaac_packages":/isaac_packages \
     "$WORKSPACE/isaac-sim_4.5.0.sif" \
-    python /workspace/eval_script_1.py
+    /isaac-sim/python.sh /workspace/eval_script_1.py
