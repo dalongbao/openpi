@@ -117,3 +117,52 @@ class EgoverseBimanualInputs(transforms.DataTransformFn):
 class EgoverseBimanualOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         return {"actions": np.asarray(data["actions"][:, :BIMANUAL_ACTION_DIM])}
+
+
+# --- Single-arm cartesian (object_in_container): 1x6 EE pose ---
+
+SINGLE_ARM_ACTION_DIM = 6
+
+
+def make_egoverse_single_arm_example() -> dict:
+    return {
+        "observation/image": np.random.randint(256, size=(480, 640, 3), dtype=np.uint8),
+        "observation/state": np.random.rand(6).astype(np.float32),
+        "prompt": "put the object in the container",
+    }
+
+
+@dataclasses.dataclass(frozen=True)
+class EgoverseSingleArmInputs(transforms.DataTransformFn):
+    model_type: _model.ModelType
+
+    def __call__(self, data: dict) -> dict:
+        base_image = _parse_image(data["observation/image"])
+
+        inputs = {
+            "state": data["observation/state"],
+            "image": {
+                "base_0_rgb": base_image,
+                "left_wrist_0_rgb": np.zeros_like(base_image),
+                "right_wrist_0_rgb": np.zeros_like(base_image),
+            },
+            "image_mask": {
+                "base_0_rgb": np.True_,
+                "left_wrist_0_rgb": np.False_,
+                "right_wrist_0_rgb": np.False_,
+            },
+        }
+
+        if "actions" in data:
+            inputs["actions"] = data["actions"]
+
+        if "prompt" in data:
+            inputs["prompt"] = data["prompt"]
+
+        return inputs
+
+
+@dataclasses.dataclass(frozen=True)
+class EgoverseSingleArmOutputs(transforms.DataTransformFn):
+    def __call__(self, data: dict) -> dict:
+        return {"actions": np.asarray(data["actions"][:, :SINGLE_ARM_ACTION_DIM])}

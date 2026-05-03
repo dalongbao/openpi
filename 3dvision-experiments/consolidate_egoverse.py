@@ -35,10 +35,26 @@ def main(
     repo_name: str,
     task: str,
     dst_dir: str = "/cluster/work/cvg/data/Egoverse/lerobot_egoverse",
+    action_dim: int = 12,
     max_episodes: int | None = None,
 ):
     import os
     os.environ["HF_LEROBOT_HOME"] = dst_dir
+
+    # Auto-detect action_dim from first source dir's info.json if not specified.
+    if action_dim == 12:
+        first_src = Path(src_dirs[0])
+        for d in sorted(first_src.iterdir()):
+            info_path = d / "meta" / "info.json"
+            if info_path.exists():
+                info = json.loads(info_path.read_text())
+                detected = info["features"]["observations.state.ee_pose"]["shape"][0]
+                if detected != action_dim:
+                    print(f"Auto-detected action_dim={detected} from {d.name}")
+                    action_dim = detected
+                break
+
+    robot_type = "aria_right_arm" if action_dim == 6 else "aria_bimanual"
 
     output_path = Path(dst_dir) / repo_name
     if output_path.exists():
@@ -46,7 +62,7 @@ def main(
 
     dataset = LeRobotDataset.create(
         repo_id=repo_name,
-        robot_type="aria_bimanual",
+        robot_type=robot_type,
         fps=30,
         features={
             "image": {
@@ -56,12 +72,12 @@ def main(
             },
             "state": {
                 "dtype": "float32",
-                "shape": (12,),
+                "shape": (action_dim,),
                 "names": ["state"],
             },
             "actions": {
                 "dtype": "float32",
-                "shape": (12,),
+                "shape": (action_dim,),
                 "names": ["actions"],
             },
         },

@@ -426,6 +426,40 @@ class LeRobotEgoverseBimanualDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotEgoverseSingleArmDataConfig(DataConfigFactory):
+    """Data config for Egoverse single-arm: 1x6 cartesian EE pose, single front camera."""
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/image": "image",
+                        "observation/state": "state",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[egoverse_policy.EgoverseSingleArmInputs(model_type=model_config.model_type)],
+            outputs=[egoverse_policy.EgoverseSingleArmOutputs()],
+        )
+
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class RLDSDroidDataConfig(DataConfigFactory):
     """
     Config for training on DROID, using RLDS data format (for efficient training on larger datasets).
@@ -1126,7 +1160,7 @@ _CONFIGS = [
             pi05=True, action_horizon=10, discrete_state_input=False,
             paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora",
         ),
-        data=LeRobotEgoverseBimanualDataConfig(
+        data=LeRobotEgoverseSingleArmDataConfig(
             repo_id="egoverse/oic_human",
             base_config=DataConfig(prompt_from_task=True),
         ),

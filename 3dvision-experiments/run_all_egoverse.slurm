@@ -25,8 +25,8 @@ echo "=== Step 1: Consolidate datasets ==="
 C1=$(sbatch --parsable $COMMON --time=12:00:00 --wrap="$ENV && uv run python 3dvision-experiments/consolidate_egoverse.py --src-dirs $HUMAN_BAG --repo-name egoverse/bag_grocery_human --task 'bag the groceries' --dst-dir $DST_DIR")
 echo "  bag_grocery_human: $C1"
 
-# Human object_in_container
-C2=$(sbatch --parsable $COMMON --time=12:00:00 --wrap="$ENV && uv run python 3dvision-experiments/consolidate_egoverse.py --src-dirs $HUMAN_OIC --repo-name egoverse/oic_human --task 'put the object in the container' --dst-dir $DST_DIR")
+# Human object_in_container (6-dim single arm)
+C2=$(sbatch --parsable $COMMON --time=12:00:00 --wrap="$ENV && uv run python 3dvision-experiments/consolidate_egoverse.py --src-dirs $HUMAN_OIC --repo-name egoverse/oic_human --task 'put the object in the container' --action-dim 6 --dst-dir $DST_DIR")
 echo "  oic_human: $C2"
 
 # Mixed bag_grocery (human + teleop)
