@@ -1101,6 +1101,62 @@ _CONFIGS = [
         keep_period=30_000,
         num_train_steps=30_000,
     ),
+    # --- Human-only configs ---
+    TrainConfig(
+        name="pi05_ego_human_bag_grocery",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotEgoverseBimanualDataConfig(
+            repo_id="egoverse/bag_grocery_human",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=5e-5, decay_steps=1_000_000, decay_lr=5e-5),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
+        freeze_filter=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora").get_freeze_filter(),
+        save_interval=5_000, keep_period=30_000, num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi05_ego_human_oic",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotEgoverseBimanualDataConfig(
+            repo_id="egoverse/oic_human",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=5e-5, decay_steps=1_000_000, decay_lr=5e-5),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
+        freeze_filter=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora").get_freeze_filter(),
+        save_interval=5_000, keep_period=30_000, num_train_steps=30_000,
+    ),
+    # --- Mixed human + teleop configs ---
+    TrainConfig(
+        name="pi05_ego_mix_bag_grocery",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotEgoverseBimanualDataConfig(
+            repo_id="egoverse/bag_grocery_mix",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=5e-5, decay_steps=1_000_000, decay_lr=5e-5),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
+        freeze_filter=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora").get_freeze_filter(),
+        save_interval=5_000, keep_period=30_000, num_train_steps=30_000,
+    ),
     # RoboArena & PolaRiS configs.
     *roboarena_config.get_roboarena_configs(),
     *polaris_config.get_polaris_configs(),
