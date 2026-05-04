@@ -37,10 +37,12 @@ from omni.isaac.sensor import Camera
 # --------------------------------------------------------------------
 # CONFIGURATION
 # --------------------------------------------------------------------
-USD_PATH       = "/workspace/kitchen_scene_1.usd"
-CHECKPOINT_DIR = "/checkpoints/pi05_egoverse/test/29999"  # mounted via apptainer --bind
-RESULTS_CSV    = "/workspace/results.csv"
-VIDEO_PATH     = "/workspace/evaluation.mp4"
+USD_PATH         = "/workspace/kitchen_scene_1.usd"
+CHECKPOINT_DIR   = "/checkpoints/pi05_egoverse/test/29999"  # mounted via apptainer --bind
+RESULTS_CSV      = "/workspace/results.csv"
+VIDEO_PATH       = "/workspace/evaluation.mp4"
+RECORDING_PATH   = "/workspace/recording.mp4"
+RECORDING_RES    = (1280, 720)  # higher res for human review
 
 # The actual language command the model receives
 LANGUAGE_COMMAND = "place the plate into the yellow crate"
@@ -113,8 +115,13 @@ wrist_cam = Camera(
     prim_path="/World/fr3/fr3_hand/WristCamera",
     resolution=CAMERA_RES,
 )
+recording_cam = Camera(
+    prim_path="/World/RecordingCamera",
+    resolution=RECORDING_RES,
+)
 external_cam.initialize()
 wrist_cam.initialize()
+recording_cam.initialize()
 
 # Warm up the renderer so camera buffers get filled
 print("[init] Warming up cameras...")
@@ -162,6 +169,12 @@ video_writer = cv2.VideoWriter(
     cv2.VideoWriter_fourcc(*"mp4v"),
     50,  # fps matches 50Hz sim
     CAMERA_RES,
+)
+recording_writer = cv2.VideoWriter(
+    RECORDING_PATH,
+    cv2.VideoWriter_fourcc(*"mp4v"),
+    50,
+    RECORDING_RES,
 )
 
 last_action_chunk = None
@@ -216,6 +229,8 @@ try:
 
         # ---- RECORD ----
         video_writer.write(cv2.cvtColor(ext_img, cv2.COLOR_RGB2BGR))
+        rec_frame = prepare_image(recording_cam.get_rgba())
+        recording_writer.write(cv2.cvtColor(rec_frame, cv2.COLOR_RGB2BGR))
 
         # ---- LOG ----
         writer.writerow([step, f"{infer_ms:.1f}"] + joint_pos.tolist())
@@ -231,6 +246,8 @@ finally:
     print("[exit] Closing...")
     csv_file.close()
     video_writer.release()
-    print(f"[exit] Video saved to {VIDEO_PATH}")
+    recording_writer.release()
+    print(f"[exit] Policy video saved to {VIDEO_PATH}")
+    print(f"[exit] Recording video saved to {RECORDING_PATH}")
     simulation_app.close()
     print("[exit] Done.")
