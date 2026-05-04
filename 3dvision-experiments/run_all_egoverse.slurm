@@ -17,7 +17,7 @@ TELEOP_BAG="/cluster/work/cvg/jiaqchen/EGOVERSE_DATA_3DV/bag_grocery"
 COMMON="--mem-per-cpu=16G --cpus-per-task=8"
 GPU="--partition=gpu.24h --time=24:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1"
 
-ENV="export PATH=\$HOME/.local/bin:\$PATH && cd ~/openpi && export HF_HOME=/cluster/work/cvg/data/rytsui/hf_cache && export HF_DATASETS_CACHE=/cluster/work/cvg/data/rytsui/hf_cache/datasets && export HF_LEROBOT_HOME=$DST_DIR"
+ENV="export PATH=\$HOME/.local/bin:\$PATH && cd ~/openpi && export HF_HOME=/cluster/work/cvg/data/Egoverse/hf_cache && export HF_DATASETS_CACHE=/cluster/work/cvg/data/Egoverse/hf_cache/datasets && export HF_LEROBOT_HOME=$DST_DIR"
 
 echo "=== Step 1: Consolidate datasets ==="
 
