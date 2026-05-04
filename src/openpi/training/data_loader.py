@@ -7,7 +7,6 @@ from typing import Literal, Protocol, SupportsIndex, TypeVar
 
 import jax
 import jax.numpy as jnp
-import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
 import torch
 
@@ -145,6 +144,7 @@ def create_torch_dataset(
         candidate = pathlib.Path(lerobot_home) / repo_id
         if candidate.exists():
             local_root = candidate
+    import lerobot.common.datasets.lerobot_dataset as lerobot_dataset  # training-only dep
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id, root=local_root)
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
