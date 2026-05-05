@@ -81,22 +81,41 @@ tail -f slurm-<jobid>.out
 sacct -j <jobid> --format=JobID,State,Elapsed,AllocTRES%60
 ```
 
+## Euler Filesystem Layout
+
+| Mount | Path | Quota | Characteristics |
+|-------|------|-------|-----------------|
+| Home | `/cluster/home/rytsui` (`~`) | 50 GB | Persistent, backed up. Too small for data/checkpoints. |
+| Work | `/cluster/work/cvg/` | 46 TB shared (group) | Persistent, no auto-delete. **Currently 100% full (as of 2026-05-05).** |
+| Scratch | `/cluster/scratch/rytsui/` | 2.5 TB per user, ~211 TB free | **Auto-deleted after 15 days of no access.** Fast, use for checkpoints and caches. |
+
+**Rules:**
+- Never write checkpoints or large caches to `~/` or `/cluster/work/cvg/data/rytsui/`.
+- Checkpoints go to: `/cluster/scratch/rytsui/checkpoints/`
+- HF cache goes to: `/cluster/scratch/rytsui/hf_cache/` (set `HF_HOME`, `HF_DATASETS_CACHE`)
+- Source datasets (LeRobot format) remain on work: `/cluster/work/cvg/data/Egoverse/lerobot_egoverse/`
+- **Known issue:** HF `datasets` library checks free disk space on the filesystem where source data resides. Since `/cluster/work/cvg` is 100% full, `load_dataset` fails with "Not enough disk space" even when cache is on scratch. Workaround: move datasets to scratch, or patch the space check.
+
 ## Shared Paths on Euler
 
 | What | Path |
 |------|------|
 | Raw h5 data (object_in_bowl, 78 eps) | `/cluster/work/cvg/data/Egoverse/raw_timesynced_h5/object_in_bowl_processed_50hz/` |
 | Raw h5 data (bag_groceries, 300 eps) | `/cluster/work/cvg/data/Egoverse/raw_timesynced_h5/bag_groceries/` |
-| Converted LeRobot dataset (5 eps) | `/cluster/work/cvg/data/Egoverse/lerobot_egoverse/egoverse/all/` |
+| Raw LeRobot v2 data (jiaqchen's) | `/cluster/work/cvg/jiaqchen/EGOVERSE_DATA_3DV/bag_grocery/` and `.../object_in_container/` |
+| Converted LeRobot dataset (object_in_bowl, 5 eps) | `/cluster/work/cvg/data/Egoverse/lerobot_egoverse/egoverse/all/` |
+| Converted LeRobot dataset (bag_grocery_human, 1683 eps) | `/cluster/work/cvg/data/Egoverse/lerobot_egoverse/egoverse/bag_grocery_human/` |
+| Converted LeRobot dataset (oic_human, 2537 eps) | `/cluster/work/cvg/data/Egoverse/lerobot_egoverse/egoverse/oic_human/` |
 | pi0.5 base weights (JAX/orbax) | `/cluster/work/cvg/data/Egoverse/pi05_base_jax/params` |
-| pi0.5 base weights (safetensors, unused) | `/cluster/work/cvg/data/rytsui/pi05_base/` |
 
-Per-user paths (checkpoints, experiments):
+Per-user paths:
 
 | What | Path |
 |------|------|
-| Training checkpoints | `/cluster/work/cvg/data/<username>/checkpoints/pi05_egoverse/<exp_name>/` |
-| Norm stats | `~/openpi/assets/pi05_egoverse/egoverse/all` |
+| Training checkpoints | `/cluster/scratch/rytsui/checkpoints/<config>/<exp_name>/` |
+| HF cache | `/cluster/scratch/rytsui/hf_cache/` |
+| HF datasets cache | `/cluster/scratch/rytsui/hf_cache/datasets/` |
+| Norm stats | `~/openpi/assets/<config>/<repo_id>` |
 
 ## Files We Added
 
