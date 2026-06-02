@@ -28,5 +28,5 @@ apptainer exec --nv \
     --bind "$ISAAC_SIM_CACHE_DIR/kit":/isaac-sim/kit/cache \
     --bind "$ISAAC_SIM_CACHE_DIR/ov_home":/cluster/home/$USER \
     --bind "/cluster/scratch/$USER/isaac_packages":/isaac_packages \
-    "$WORKSPACE/isaac-sim_4.5.0.sif" \
+    "/cluster/work/cvg/data/isaac-sim_4.5.0.sif" \
     /isaac-sim/python.sh /workspace/eval_script_1.py

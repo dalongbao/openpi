@@ -305,7 +305,8 @@ Timing (RTX 3090, 3000 steps):
 **Prerequisites:**
 - Euler cluster account
 - CVG group access (to read `/cluster/work/cvg/`)
-- `isaac-sim_4.5.0.sif` (6 GB) obtained via link from the project owner — place it at `/cluster/scratch/$USER/pi0_test/isaac-sim_4.5.0.sif`
+
+The Isaac Sim container is shared at `/cluster/work/cvg/data/isaac-sim_4.5.0.sif` — no transfer needed.
 
 Run all of the following on the **login node** (compute nodes have no internet).
 
@@ -401,7 +402,7 @@ APPTAINERENV_HTTP_PROXY=http://proxy.ethz.ch:3128 \
 APPTAINERENV_HTTPS_PROXY=http://proxy.ethz.ch:3128 \
 apptainer exec \
   --bind /cluster/scratch/$USER/isaac_packages:/target \
-  /cluster/scratch/$USER/pi0_test/isaac-sim_4.5.0.sif \
+  /cluster/work/cvg/data/isaac-sim_4.5.0.sif \
   /isaac-sim/python.sh -m pip install --no-cache-dir --target /target \
   "jax[cuda12]==0.5.3" "flax==0.10.2" "jaxtyping==0.2.36" \
   "orbax-checkpoint==0.11.13" "numpy==1.26.4" "beartype==0.19.0" \
@@ -428,7 +429,7 @@ apptainer exec \
 ```bash
 APPTAINERENV_ACCEPT_EULA=Y apptainer exec \
   --bind /cluster/scratch/$USER/isaac_packages:/isaac_packages \
-  /cluster/scratch/$USER/pi0_test/isaac-sim_4.5.0.sif \
+  /cluster/work/cvg/data/isaac-sim_4.5.0.sif \
   /isaac-sim/python.sh -c "
 import sys; sys.path.insert(0, '/isaac_packages')
 import jax, jaxtyping, orbax.checkpoint
@@ -627,12 +628,17 @@ for tex in BaseColor Metallic Normal Roughness; do wget -q -O "$ASSETS/plate/Tex
 | Fine-tuned checkpoint (step 29999) | `/cluster/work/cvg/data/rytsui/checkpoints/pi05_egoverse/test/29999/` |
 | Norm stats (backed up in checkpoint) | `/cluster/work/cvg/data/rytsui/checkpoints/pi05_egoverse/test/29999/assets/egoverse/all/norm_stats.json` |
 
+### Shared container
+
+| What | Path |
+|------|------|
+| Isaac Sim 4.5.0 container | `/cluster/work/cvg/data/isaac-sim_4.5.0.sif` |
+
 ### Per-user scratch paths (kdoman's current setup)
 
 | What | Path |
 |------|------|
 | openpi repo | `/cluster/scratch/kdoman/openpi/` |
-| Isaac Sim container | `/cluster/scratch/kdoman/pi0_test/isaac-sim_4.5.0.sif` |
 | USD scene + assets | `/cluster/scratch/kdoman/pi0_test/` |
 | Python packages (Isaac) | `/cluster/scratch/kdoman/isaac_packages/` |
 | Shader cache | `/cluster/scratch/kdoman/isaac_cache/` |
