@@ -55,6 +55,60 @@ class CheckpointWeightLoader(WeightLoader):
 
 
 @dataclasses.dataclass(frozen=True)
+class ExpandedActionCheckpointWeightLoader(WeightLoader):
+    """Loads pi0/pi0.5 checkpoint and expands the action_in_proj / action_out_proj / state_proj
+    weights to a larger action_dim. The first `source_action_dim` rows/cols are copied from the
+    checkpoint; new rows/cols are zero-filled so the model initially predicts zeros for the new
+    dims and exactly the pretrained values for the original dims.
+    """
+
+    params_path: str
+    source_action_dim: int = 32
+
+    def load(self, params: at.Params) -> at.Params:
+        loaded = _model.restore_params(download.maybe_download(self.params_path), restore_type=np.ndarray)
+        loaded = self._expand_action_projections(loaded, params)
+        return _merge_params(loaded, params, missing_regex=".*lora.*")
+
+    def _expand_action_projections(self, loaded: at.Params, ref: at.Params) -> at.Params:
+        flat_loaded = flax.traverse_util.flatten_dict(loaded, sep="/")
+        flat_ref = flax.traverse_util.flatten_dict(ref, sep="/")
+
+        # action_in_proj.kernel: [action_dim, expert_width]  -- expand rows (axis 0)
+        # state_proj.kernel:     [action_dim, expert_width]  -- expand rows (axis 0)
+        # action_out_proj.kernel:[expert_width, action_dim]  -- expand cols (axis 1)
+        # action_out_proj.bias:  [action_dim]                -- expand
+        targets = [
+            ("action_in_proj/kernel", 0),
+            ("state_proj/kernel", 0),
+            ("action_out_proj/kernel", 1),
+            ("action_out_proj/bias", 0),
+        ]
+        for suffix, axis in targets:
+            for k in list(flat_loaded.keys()):
+                if not k.endswith(suffix):
+                    continue
+                if k not in flat_ref:
+                    continue
+                src = flat_loaded[k]
+                dst_shape = flat_ref[k].shape
+                if src.shape == dst_shape:
+                    continue
+                if src.shape[axis] != self.source_action_dim:
+                    raise ValueError(
+                        f"{k}: expected source dim {self.source_action_dim} on axis {axis}, got {src.shape}"
+                    )
+                new = np.zeros(dst_shape, dtype=src.dtype)
+                slicer = [slice(None)] * len(dst_shape)
+                slicer[axis] = slice(0, self.source_action_dim)
+                new[tuple(slicer)] = src
+                flat_loaded[k] = new
+                logger.info(f"Expanded {k}: {src.shape} -> {dst_shape}")
+
+        return flax.traverse_util.unflatten_dict(flat_loaded, sep="/")
+
+
+@dataclasses.dataclass(frozen=True)
 class PaliGemmaWeightLoader(WeightLoader):
     """Loads weights from the official PaliGemma checkpoint.
 

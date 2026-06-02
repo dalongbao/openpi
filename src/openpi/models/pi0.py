@@ -211,7 +211,11 @@ class Pi0(_model.BaseModel):
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-        return jnp.mean(jnp.square(v_t - u_t), axis=-1)
+        sq_err = jnp.square(v_t - u_t)
+        if observation.action_mask is not None:
+            mask = observation.action_mask[:, None, :].astype(sq_err.dtype)
+            return jnp.sum(sq_err * mask, axis=-1) / jnp.clip(jnp.sum(mask, axis=-1), 1)
+        return jnp.mean(sq_err, axis=-1)
 
     @override
     def sample_actions(

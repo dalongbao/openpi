@@ -166,3 +166,56 @@ class EgoverseSingleArmInputs(transforms.DataTransformFn):
 class EgoverseSingleArmOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         return {"actions": np.asarray(data["actions"][:, :SINGLE_ARM_ACTION_DIM])}
+
+
+# --- Mixed (human Cartesian + teleop joint) ---
+# Unified 60-dim layout: [0:12] human Cartesian, [12:26] arm qpos, [26:60] hand qpos.
+# Sample carries an action_mask[60] indicating which dims are valid.
+
+MIX_ACTION_DIM = 60
+
+
+def make_egoverse_mix_example() -> dict:
+    return {
+        "observation/image": np.random.randint(256, size=(480, 640, 3), dtype=np.uint8),
+        "observation/state": np.random.rand(MIX_ACTION_DIM).astype(np.float32),
+        "action_mask": np.ones(MIX_ACTION_DIM, dtype=bool),
+        "prompt": "bag the groceries",
+    }
+
+
+@dataclasses.dataclass(frozen=True)
+class EgoverseMixInputs(transforms.DataTransformFn):
+    model_type: _model.ModelType
+
+    def __call__(self, data: dict) -> dict:
+        base_image = _parse_image(data["observation/image"])
+
+        inputs = {
+            "state": data["observation/state"],
+            "image": {
+                "base_0_rgb": base_image,
+                "left_wrist_0_rgb": np.zeros_like(base_image),
+                "right_wrist_0_rgb": np.zeros_like(base_image),
+            },
+            "image_mask": {
+                "base_0_rgb": np.True_,
+                "left_wrist_0_rgb": np.False_,
+                "right_wrist_0_rgb": np.False_,
+            },
+        }
+
+        if "actions" in data:
+            inputs["actions"] = data["actions"]
+        if "action_mask" in data:
+            inputs["action_mask"] = np.asarray(data["action_mask"], dtype=bool)
+        if "prompt" in data:
+            inputs["prompt"] = data["prompt"]
+
+        return inputs
+
+
+@dataclasses.dataclass(frozen=True)
+class EgoverseMixOutputs(transforms.DataTransformFn):
+    def __call__(self, data: dict) -> dict:
+        return {"actions": np.asarray(data["actions"][:, :MIX_ACTION_DIM])}

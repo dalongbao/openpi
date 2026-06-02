@@ -100,13 +100,65 @@ def main(config_name: str, max_frames: int | None = None):
         )
 
     keys = ["state", "actions"]
-    stats = {key: normalize.RunningStats() for key in keys}
 
+    # If the dataset carries `action_mask`, do a mask-aware per-dim accumulation so masked
+    # zero-padded dims don't pollute the mean/std. Otherwise fall back to the standard path.
+    use_masked = False
     for batch in tqdm.tqdm(data_loader, total=num_batches, desc="Computing stats"):
-        for key in keys:
-            stats[key].update(np.asarray(batch[key]))
+        use_masked = "action_mask" in batch
+        break
 
-    norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
+    if not use_masked:
+        stats = {key: normalize.RunningStats() for key in keys}
+        for batch in tqdm.tqdm(data_loader, total=num_batches, desc="Computing stats"):
+            for key in keys:
+                stats[key].update(np.asarray(batch[key]))
+        norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
+    else:
+        acc = {k: {"sum": None, "sumsq": None, "count": None, "min": None, "max": None} for k in keys}
+        for batch in tqdm.tqdm(data_loader, total=num_batches, desc="Computing stats (masked)"):
+            mask = np.asarray(batch["action_mask"]).astype(bool)  # [B, ad]
+            for key in keys:
+                arr = np.asarray(batch[key]).astype(np.float64)
+                if arr.ndim == 3:  # actions: [B, ah, ad] -> broadcast mask along horizon
+                    m = np.broadcast_to(mask[:, None, :], arr.shape)
+                    arr_flat = arr.reshape(-1, arr.shape[-1])
+                    m_flat = m.reshape(-1, m.shape[-1])
+                else:  # state: [B, ad]
+                    arr_flat = arr
+                    m_flat = mask
+                w = m_flat.astype(np.float64)
+                contrib_sum = (arr_flat * w).sum(axis=0)
+                contrib_sumsq = ((arr_flat ** 2) * w).sum(axis=0)
+                contrib_count = w.sum(axis=0)
+                if acc[key]["sum"] is None:
+                    acc[key]["sum"] = contrib_sum
+                    acc[key]["sumsq"] = contrib_sumsq
+                    acc[key]["count"] = contrib_count
+                    valid_vals = np.where(m_flat, arr_flat, np.nan)
+                    acc[key]["min"] = np.nanmin(valid_vals, axis=0)
+                    acc[key]["max"] = np.nanmax(valid_vals, axis=0)
+                else:
+                    acc[key]["sum"] += contrib_sum
+                    acc[key]["sumsq"] += contrib_sumsq
+                    acc[key]["count"] += contrib_count
+                    valid_vals = np.where(m_flat, arr_flat, np.nan)
+                    acc[key]["min"] = np.fmin(acc[key]["min"], np.nanmin(valid_vals, axis=0))
+                    acc[key]["max"] = np.fmax(acc[key]["max"], np.nanmax(valid_vals, axis=0))
+
+        norm_stats = {}
+        for key in keys:
+            cnt = np.maximum(acc[key]["count"], 1)
+            mean = acc[key]["sum"] / cnt
+            var = np.maximum(acc[key]["sumsq"] / cnt - mean ** 2, 0)
+            std = np.sqrt(var)
+            # Zero-out stats for dims that never saw a valid sample (count==0) so normalize is a no-op.
+            never_seen = acc[key]["count"] == 0
+            mean = np.where(never_seen, 0.0, mean)
+            std = np.where(never_seen, 1.0, std)
+            mn = np.where(never_seen, 0.0, np.where(np.isnan(acc[key]["min"]), 0.0, acc[key]["min"]))
+            mx = np.where(never_seen, 0.0, np.where(np.isnan(acc[key]["max"]), 0.0, acc[key]["max"]))
+            norm_stats[key] = normalize.NormStats(mean=mean.astype(np.float32), std=std.astype(np.float32), q01=mn.astype(np.float32), q99=mx.astype(np.float32))
 
     output_path = config.assets_dirs / data_config.repo_id
     print(f"Writing stats to: {output_path}")

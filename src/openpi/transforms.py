@@ -337,6 +337,25 @@ class PadStatesAndActions(DataTransformFn):
         return data
 
 
+@dataclasses.dataclass(frozen=True)
+class ZeroMaskedDims(DataTransformFn):
+    """Zero-out state and action dims where action_mask=False. Run AFTER Normalize so
+    masked-out dims become exact zeros for the model input, regardless of norm stats.
+    Loss is also masked downstream, so these zeros are ignored end-to-end.
+    """
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if "action_mask" not in data:
+            return data
+        mask = np.asarray(data["action_mask"]).astype(bool)
+        if "state" in data:
+            data["state"] = data["state"] * mask.astype(data["state"].dtype)
+        if "actions" in data:
+            ah_mask = mask[..., None, :] if data["actions"].ndim > mask.ndim else mask
+            data["actions"] = data["actions"] * ah_mask.astype(data["actions"].dtype)
+        return data
+
+
 def flatten_dict(tree: at.PyTree) -> dict:
     """Flatten a nested dictionary. Uses '/' as the separator."""
     return traverse_util.flatten_dict(tree, sep="/")
