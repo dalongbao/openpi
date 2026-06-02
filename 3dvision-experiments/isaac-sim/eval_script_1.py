@@ -40,7 +40,7 @@ CHECKPOINT_DIR = "/checkpoints/pi05_egoverse/test/29999"
 RESULTS_CSV    = "/workspace/results.csv"
 VIDEO_PATH     = "/workspace/evaluation.mp4"
 
-LANGUAGE_COMMAND = "place the plate into the yellow crate"
+LANGUAGE_COMMAND = "put the object in the bowl"  # must match training task label exactly
 
 NUM_STEPS      = 3000   # 60 s at 50 Hz
 NUM_ARM_JOINTS = 7
@@ -120,6 +120,29 @@ for prim_path, local_usd in _PAYLOAD_PATCHES.items():
     else:
         print(f"[WARN] {prim_path} not found in stage — skipping patch")
 
+# Reposition ExternalCamera to approximate Aria egocentric view.
+# Scene: table top at z≈1.807m, robot at (0.09, 0.07, 1.807), plate at (0.53,-0.41,1.807), crate at (1.46,-0.02,1.807).
+# Original camera was at (0.5, 0, 4.2) looking straight down (bird's-eye) — wrong for training data.
+# Training used Aria glasses at ~eye level looking forward at the workspace.
+# Place camera in front of the scene, at table height, looking toward the robot/objects.
+_cam_prim = _stage.GetPrimAtPath("/World/ExternalCamera")
+if _cam_prim.IsValid():
+    _xf = UsdGeom.Xformable(_cam_prim)
+    _xf.ClearXformOpOrder()
+    # Position: y=-1.5m in front of table, x=0.7m centered on workspace, z=2.0m (above table height)
+    # Raised to z=2.5m (0.7m above table at z=1.807) to better match Aria eye-level (~0.7m above table).
+    # Tilt: 20 degrees downward, matching a person standing and looking at the workspace.
+    _xf.AddTranslateOp().Set(Gf.Vec3d(0.7, -1.5, 2.5))
+    # look_dir = normalize((0, 1.8, -0.65)) → 20° downward tilt toward workspace center
+    _look_dir = Gf.Vec3d(0.0, 1.8, -0.65).GetNormalized()
+    _rot = Gf.Rotation(Gf.Vec3d(0.0, 0.0, -1.0), _look_dir)
+    _quat = _rot.GetQuat()
+    _xf.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(
+        Gf.Quatd(_quat.GetReal(), *_quat.GetImaginary()))
+    print(f"[init] ExternalCamera repositioned to (0.7, -1.5, 2.5) looking at workspace (20° down)")
+else:
+    print("[WARN] ExternalCamera prim not found — using original position")
+
 world = World(stage_units_in_meters=1.0)
 world.reset()
 
@@ -155,9 +178,40 @@ def get_frame(cam, expected_res):
     return rgba[:, :, :3]
 
 
+# Save the first policy-camera frame so we can verify the camera view
+_diag_frame = get_frame(external_cam, POLICY_CAM_RES)
+cv2.imwrite("/workspace/policy_cam_init.png", cv2.cvtColor(_diag_frame, cv2.COLOR_RGB2BGR))
+print(f"[init] Saved policy camera preview → /workspace/policy_cam_init.png")
+
+
+
+# Joint permutation: Isaac Sim FR3 vs Egoverse training data differ in dims 3 and 5.
+# Isaac Sim idx3 = fr3_joint4 (elbow, always negative, limits [-3.04, -0.152] rad)
+# Isaac Sim idx5 = fr3_joint6 (wrist, always positive, limits [0.544, 4.52] rad)
+# Training dim3 is always strongly positive (~0.69-1.00) → corresponds to FR3 j6 (sim idx5)
+# Training dim5 is mostly negative (~-0.43 to 0.19) → corresponds to FR3 j4 (sim idx3)
+# Permutation: sim[0,1,2,3,4,5,6] ↔ training[0,1,2,5,4,3,6]
+_SIM_TO_TRAIN = [0, 1, 2, 5, 4, 3, 6]   # sim_idx -> training_dim
+_TRAIN_TO_SIM = [0, 1, 2, 5, 4, 3, 6]   # training_dim -> sim_idx (same permutation: self-inverse)
+
+
+# Training-mean hand state (dims 7-23) across all 5 training episodes.
+# Feeding zeros was OOD; using the mean keeps state in the training distribution.
+# Updated each step with the policy's own hand action prediction (autoregressive).
+HAND_MEAN = np.array([
+     0.236, -0.282,  0.555,  0.717,  0.583,  0.049,  1.000,
+     0.157,  0.092,  0.854,  1.020,  0.101,  0.964,  0.919,
+     0.110,  0.984,  0.943,
+], dtype=np.float32)
+
+_hand_state = HAND_MEAN.copy()   # updated each step
+
+
 def build_observation(ext_img_uint8, joint_pos):
     state = np.zeros(24, dtype=np.float32)
-    state[:7] = joint_pos[:7]
+    for sim_idx, train_dim in enumerate(_SIM_TO_TRAIN):
+        state[train_dim] = joint_pos[sim_idx]
+    state[7:24] = _hand_state    # use prev predicted hand action, not zeros
     return {
         "observation/image": ext_img_uint8,
         "observation/state": state,
@@ -189,12 +243,32 @@ video_writer = cv2.VideoWriter(
 last_action_chunk = None
 chunk_idx         = 0
 step              = 0
+smoothed_cmd      = None      # exponential moving average over joint position targets
+ACTION_SMOOTH_ALPHA = 0.8    # blend new target with previous (0.4 was too slow — arm froze at mean)
 
 try:
     world.reset()
     franka.initialize()          # must re-init after world.reset()
     for _ in range(20):
         world.step(render=True)
+
+    # Move the robot to the training home position before running the policy.
+    # dim-to-sim permutation: [0,1,2,5,4,3,6] so training dims [0,1,2,3,4,5,6]
+    # map to sim indices [0,1,2,5,4,3,6].
+    # FR3 j4 (sim idx3) has upper limit -0.152; dim5 home ≈ -0.025 so clip to -0.152.
+    # FR3 j6 (sim idx5) home = dim3 ≈ 0.994.
+    HOME_TRAIN = np.array([0.476, 0.120, 0.292, 0.994, 0.105, -0.025, -0.009], np.float32)
+    home_cmd = np.zeros(9, dtype=np.float32)
+    for train_dim, sim_idx in enumerate(_TRAIN_TO_SIM):
+        home_cmd[sim_idx] = HOME_TRAIN[train_dim]
+    home_cmd[7] = 0.02
+    home_cmd[8] = 0.02
+    print(f"[init] Moving to home: sim cmds = {home_cmd[:7].round(3)}")
+    for _ in range(100):
+        franka.apply_action(ArticulationAction(joint_positions=home_cmd))
+        world.step(render=True)
+    pos = franka.get_joint_positions()
+    print(f"[init] At home after 100 steps: {pos[:7].round(3)}")
 
     print("[run] Starting evaluation...")
     for step in range(NUM_STEPS):
@@ -207,8 +281,11 @@ try:
             joint_pos = np.zeros(9, dtype=np.float32)
 
         # ---- THINK ----
+        # Re-query every step for the first 200 steps so the arm responds quickly
+        # to the initial scene, then switch to chunk-based inference (every 10 steps).
         t0 = time.time()
-        if last_action_chunk is None or chunk_idx >= len(last_action_chunk):
+        _force_requery = step < 200
+        if last_action_chunk is None or chunk_idx >= len(last_action_chunk) or _force_requery:
             obs = build_observation(policy_img, joint_pos)
             with torch.no_grad():
                 result = policy.infer(obs)
@@ -219,17 +296,36 @@ try:
         chunk_idx += 1
         infer_ms  = (time.time() - t0) * 1000
 
+        # Log raw policy arm actions at key steps to detect OOD/frozen policy
+        if step == 0:
+            print(f"[diag] chunk shape={last_action_chunk.shape}  arm actions (first 3 chunks):")
+            for _ci in range(min(3, len(last_action_chunk))):
+                _a = last_action_chunk[_ci]
+                print(f"  chunk[{_ci}] arm={np.round(_a[:7], 3)}")
+            cv2.imwrite("/workspace/policy_cam_step0.png",
+                        cv2.cvtColor(policy_img, cv2.COLOR_RGB2BGR))
+        if step % 500 == 0 and step > 0:
+            print(f"[diag] step {step} action train_arm={np.round(action[:7], 3)}")
+
         # ---- ACT ----
-        target_joints = action[:NUM_ARM_JOINTS]
         hand_action   = action[NUM_ARM_JOINTS:]
         gripper_cmd   = float(np.mean(hand_action[:3]))
 
+        # Update hand state for next observation (autoregressive — keeps state in-distribution)
+        _hand_state[:] = hand_action
+
         finger_l, finger_r = to_gripper_positions(gripper_cmd)
         full_cmd = np.zeros(9, dtype=np.float32)
-        full_cmd[:NUM_ARM_JOINTS] = target_joints
+        for train_dim, sim_idx in enumerate(_TRAIN_TO_SIM):
+            full_cmd[sim_idx] = action[train_dim]
         full_cmd[7] = finger_l
         full_cmd[8] = finger_r
-        franka.apply_action(ArticulationAction(joint_positions=full_cmd))
+        # Smooth joint targets to reduce chunk-boundary jitter
+        if smoothed_cmd is None:
+            smoothed_cmd = full_cmd.copy()
+        else:
+            smoothed_cmd = ACTION_SMOOTH_ALPHA * full_cmd + (1.0 - ACTION_SMOOTH_ALPHA) * smoothed_cmd
+        franka.apply_action(ArticulationAction(joint_positions=smoothed_cmd))
 
         # ---- STEP ----
         world.step(render=True)
@@ -240,8 +336,9 @@ try:
         # ---- LOG ----
         writer.writerow([step, f"{infer_ms:.1f}"] + joint_pos.tolist())
         if step % 50 == 0:
+            jp = joint_pos[:7]
             print(f"[run] step {step:4d} | infer {infer_ms:5.1f}ms | "
-                  f"j0-j2 {joint_pos[:3].round(2)}")
+                  f"arm {jp.round(3)}")
 
 except Exception as e:
     print(f"[FATAL] Crashed at step {step}: {e}")
