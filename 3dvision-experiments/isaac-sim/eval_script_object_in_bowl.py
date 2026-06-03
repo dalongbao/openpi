@@ -1,35 +1,45 @@
-"""eval_script_1.py — thin shim around ``eval.runner.main``.
-
-The legacy monolithic script has been refactored into the ``eval`` package
-sitting next to this file. This shim preserves the exact entry-point path
-that ``submit.sh`` invokes (``/workspace/eval_script_1.py``) so existing
-SLURM one-liners keep working without changes.
-
-To run with custom flags, either edit ``submit.sh`` or invoke this file
-directly with the same CLI as ``eval.runner``. See ``eval/README.md``.
+"""
+vla_eval.py
+Run pi0.5 (checkpoint 29999) on a Franka FR3 in Isaac Sim
+Task: object_in_bowl — pick up the object and place it in the bowl.
 """
 
+# === MUST BE THE ABSOLUTE FIRST ISAAC-RELATED LINE ===
+from isaacsim import SimulationApp
+
+CONFIG = {
+    "headless": True,
+    "livestream": 0,      # no streaming needed
+    "width": 1280,
+    "height": 720,
+}
+simulation_app = SimulationApp(CONFIG)
+# ======================================================
+
+import dataclasses
 import os
 import sys
+import csv
+import time
+import traceback
+import numpy as np
+import torch
+import cv2
 
-# Make the sibling ``eval`` package importable when this file is invoked
-# as a standalone script (e.g. ``/isaac-sim/python.sh eval_script_1.py``).
-# We look in two places, in order:
-#   1. The directory containing this file (e.g. /workspace/ on Euler).
-#   2. The repo's isaac-sim dir under the bind-mounted openpi clone, so
-#      callers can copy just this shim and pull the package from git.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_REPO_ISAAC_DIR = "/workspace/openpi/3dvision-experiments/isaac-sim"
-for _p in (_HERE, _REPO_ISAAC_DIR):
-    if os.path.isdir(os.path.join(_p, "eval")) and _p not in sys.path:
-        sys.path.insert(0, _p)
+from omni.isaac.core import World
+from omni.isaac.core.utils.stage import open_stage
+from omni.isaac.core.articulations import Articulation
+from omni.isaac.core.utils.types import ArticulationAction
+from omni.isaac.sensor import Camera
 
-from eval.runner import main  # noqa: E402
+# --------------------------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------------------------
+USD_PATH       = "/workspace/kitchen_scene_1.usd"
+CHECKPOINT_DIR = "/checkpoints/pi05_egoverse/test/29999"
+RESULTS_CSV    = "/workspace/results.csv"
+VIDEO_PATH     = "/workspace/evaluation.mp4"
 
-<<<<<<< HEAD
-if __name__ == "__main__":
-    sys.exit(main())
-=======
 LANGUAGE_COMMAND = "put the object in the bowl"  # must match training task label exactly
 
 NUM_STEPS      = 3000   # 60 s at 50 Hz
@@ -87,7 +97,8 @@ print(f"[init] Opening stage {USD_PATH}")
 open_stage(usd_path=USD_PATH)
 
 import omni.usd
-from pxr import Sdf, UsdGeom, Gf  # noqa: Gf still used for Gf.Vec3f in attribute writes
+import math
+from pxr import Sdf, UsdGeom, Gf, UsdPhysics  # noqa: Gf still used for Gf.Vec3f in attribute writes
 
 _stage = omni.usd.get_context().get_stage()
 
@@ -97,8 +108,7 @@ _stage = omni.usd.get_context().get_stage()
 _PAYLOAD_PATCHES = {
     "/World/fr3":                           "/workspace/assets/fr3_full/fr3.usd",
     "/World/SM_HeavyDutyPackingTable_C02_01": "/workspace/assets/table/SM_HeavyDutyPackingTable_C02_01.usd",
-    "/World/plate_small":                   "/workspace/assets/plate/plate_small.usd",
-    "/World/SM_Crate_A07_Yellow_01_physics": "/workspace/assets/crate/SM_Crate_A07_Yellow_01_physics.usd",
+    # plate + crate intentionally dropped — replaced by the object/bowl below.
 }
 
 for prim_path, local_usd in _PAYLOAD_PATCHES.items():
@@ -110,28 +120,119 @@ for prim_path, local_usd in _PAYLOAD_PATCHES.items():
     else:
         print(f"[WARN] {prim_path} not found in stage — skipping patch")
 
-# Reposition ExternalCamera to approximate Aria egocentric view.
-# Scene: table top at z≈1.807m, robot at (0.09, 0.07, 1.807), plate at (0.53,-0.41,1.807), crate at (1.46,-0.02,1.807).
-# Original camera was at (0.5, 0, 4.2) looking straight down (bird's-eye) — wrong for training data.
-# Training used Aria glasses at ~eye level looking forward at the workspace.
-# Place camera in front of the scene, at table height, looking toward the robot/objects.
+# ExternalCamera: match Aria RGB FoV + a more egocentric (looking-down-at-workspace) pose.
+# Scene: table top z≈1.807, robot (0.09,0.07,1.807), cube (0.53,-0.41,1.85), bowl (1.46,-0.02,1.807).
+# Aria RGB hFOV: README target is 76°; hardware spec is closer to ~110°. Tune ARIA_HFOV_DEG if needed.
+# Pose: above + slightly in front (operator/-Y side), looking steeply down at the workspace center —
+# closer to a head-mounted egocentric view than the previous near-horizontal standing-back shot.
+ARIA_HFOV_DEG = 76.0
+_CAM_POS    = Gf.Vec3d(0.90, -0.70, 2.90)   # above workspace, on the operator (-Y) side
+_CAM_TARGET = Gf.Vec3d(0.98, -0.20, 1.81)   # workspace center (between cube & bowl), at table height
 _cam_prim = _stage.GetPrimAtPath("/World/ExternalCamera")
 if _cam_prim.IsValid():
     _xf = UsdGeom.Xformable(_cam_prim)
     _xf.ClearXformOpOrder()
-    # Position: y=-1.5m in front of table, x=0.7m centered on workspace, z=2.0m (above table height)
-    # Raised to z=2.5m (0.7m above table at z=1.807) to better match Aria eye-level (~0.7m above table).
-    # Tilt: 20 degrees downward, matching a person standing and looking at the workspace.
-    _xf.AddTranslateOp().Set(Gf.Vec3d(0.7, -1.5, 2.5))
-    # look_dir = normalize((0, 1.8, -0.65)) → 20° downward tilt toward workspace center
-    _look_dir = Gf.Vec3d(0.0, 1.8, -0.65).GetNormalized()
-    _rot = Gf.Rotation(Gf.Vec3d(0.0, 0.0, -1.0), _look_dir)
+    _xf.AddTranslateOp().Set(_CAM_POS)
+    _look_dir = (_CAM_TARGET - _CAM_POS).GetNormalized()
+    _rot = Gf.Rotation(Gf.Vec3d(0.0, 0.0, -1.0), _look_dir)  # camera looks down its local -Z
     _quat = _rot.GetQuat()
     _xf.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(
         Gf.Quatd(_quat.GetReal(), *_quat.GetImaginary()))
-    print(f"[init] ExternalCamera repositioned to (0.7, -1.5, 2.5) looking at workspace (20° down)")
+    # FoV: only the aperture/focalLength ratio matters; square sensor for the 224x224 policy input.
+    _cam = UsdGeom.Camera(_cam_prim)
+    _h_aperture = 36.0
+    _focal = _h_aperture / (2.0 * math.tan(math.radians(ARIA_HFOV_DEG) / 2.0))
+    _cam.CreateHorizontalApertureAttr(_h_aperture)
+    _cam.CreateVerticalApertureAttr(_h_aperture)
+    _cam.CreateFocalLengthAttr(_focal)
+    print(f"[init] ExternalCamera: pos={tuple(_CAM_POS)} -> target={tuple(_CAM_TARGET)}, hFOV={ARIA_HFOV_DEG}deg")
 else:
     print("[WARN] ExternalCamera prim not found — using original position")
+
+# --------------------------------------------------------------------
+# OBJECT_IN_BOWL SCENE EDIT (authored in-code with Isaac's USD)
+# Remove the plate + crate; add a graspable cube ("object") and a bowl.
+# Native geometry => no external assets, loads offline on the GPU node.
+# Positions reused from the originals (known on-table, in ExternalCamera view).
+# Units are scene units (stage metersPerUnit ~0.55); sizes chosen to be
+# graspable by the FR3 gripper and to let the cube drop into the bowl.
+# --------------------------------------------------------------------
+for _old in ("/World/plate_small", "/World/SM_Crate_A07_Yellow_01_physics"):
+    _p = _stage.GetPrimAtPath(_old)
+    if _p.IsValid():
+        _p.SetActive(False)
+        print(f"[init] Deactivated {_old}")
+
+_OBJECT_POS = (0.527, -0.405, 1.85)   # was plate_small (Z lifted so cube rests on table)
+_BOWL_POS   = (1.463, -0.020, 1.807)  # was crate (bowl bottom at table surface)
+
+
+def _add_cube_object(stage, path, pos, size=0.06):
+    cube = UsdGeom.Cube.Define(stage, path)
+    cube.CreateSizeAttr(size)
+    UsdGeom.Xformable(cube).AddTranslateOp().Set(Gf.Vec3d(*pos))
+    prim = cube.GetPrim()
+    UsdPhysics.CollisionAPI.Apply(prim)            # analytic box collider
+    UsdPhysics.RigidBodyAPI.Apply(prim)            # dynamic
+    UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(0.05)
+    cube.CreateDisplayColorAttr([Gf.Vec3f(0.85, 0.2, 0.15)])
+    print(f"[init] Added cube object at {path} {pos}")
+
+
+def _build_bowl_mesh(Rb=0.10, Rt=0.18, H=0.13, wall=0.025, n=24):
+    """Open conical cup (watertight, no degenerate apex). Opens +Z (stage upAxis=Z)."""
+    pts = []
+
+    def ring(r, z):
+        base = len(pts)
+        for j in range(n):
+            a = 2.0 * math.pi * j / n
+            pts.append(Gf.Vec3f(r * math.cos(a), r * math.sin(a), z))
+        return base
+
+    ob = ring(Rb, 0.0)            # outer bottom
+    ot = ring(Rt, H)             # outer top (rim, outer)
+    it = ring(Rt - wall, H)      # inner top (rim, inner)
+    ib = ring(Rb - wall, wall)   # inner bottom
+    oc = len(pts); pts.append(Gf.Vec3f(0, 0, 0.0))    # outer bottom center
+    ic = len(pts); pts.append(Gf.Vec3f(0, 0, wall))   # inner floor center
+
+    counts, idx = [], []
+
+    def quad(a, b, c, d):
+        counts.append(4); idx.extend([a, b, c, d])
+
+    def tri(a, b, c):
+        counts.append(3); idx.extend([a, b, c])
+
+    for j in range(n):
+        k = (j + 1) % n
+        quad(ob + j, ob + k, ot + k, ot + j)   # outer wall
+        quad(ot + j, ot + k, it + k, it + j)   # rim annulus
+        quad(it + j, it + k, ib + k, ib + j)   # inner wall
+        tri(ic, ib + k, ib + j)                # inner floor
+        tri(oc, ob + j, ob + k)                # outer underside
+    return pts, counts, idx
+
+
+def _add_bowl(stage, path, pos):
+    mesh = UsdGeom.Mesh.Define(stage, path)
+    pts, counts, idx = _build_bowl_mesh()
+    mesh.CreatePointsAttr(pts)
+    mesh.CreateFaceVertexCountsAttr(counts)
+    mesh.CreateFaceVertexIndicesAttr(idx)
+    mesh.CreateSubdivisionSchemeAttr("none")
+    mesh.CreateDoubleSidedAttr(True)
+    UsdGeom.Xformable(mesh).AddTranslateOp().Set(Gf.Vec3d(*pos))
+    prim = mesh.GetPrim()
+    UsdPhysics.CollisionAPI.Apply(prim)
+    UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr("none")  # exact triangle mesh => concave
+    mesh.CreateDisplayColorAttr([Gf.Vec3f(0.85, 0.80, 0.70)])
+    print(f"[init] Added bowl at {path} {pos}")
+
+
+_add_cube_object(_stage, "/World/object", _OBJECT_POS)
+_add_bowl(_stage, "/World/bowl", _BOWL_POS)
 
 world = World(stage_units_in_meters=1.0)
 world.reset()
@@ -341,4 +442,3 @@ finally:
     print(f"[exit] Video saved to {VIDEO_PATH}")
     simulation_app.close()
     print("[exit] Done.")
->>>>>>> 6adb100c8609b4fd716ad5cb501fe6ec290d4d7a
