@@ -287,7 +287,21 @@ These numbers establish what to expect from the pre-trained model. Fine-tuning s
 
 ### 7.1 Overview
 
-The eval runs `eval_script_1.py` inside an Apptainer container (Isaac Sim 4.5.0) on a GPU node, via SLURM. The robot observes `kitchen_scene_1.usd` through a simulated camera, the policy predicts arm actions, and the result is saved as `evaluation.mp4` + `results.csv`.
+The eval runs inside an Apptainer container (Isaac Sim 4.5.0) on a GPU node, via SLURM. The robot observes `kitchen_scene_1.usd` through a simulated camera, the policy predicts actions, and the result is saved as `evaluation.mp4` + `results.csv`.
+
+There are **two** scripts, both stepping the same scene and sharing one FK/IK helper:
+
+| Script | What it does | Use it to |
+|--------|--------------|-----------|
+| `eval_script_object_in_bowl.py` | Runs the fine-tuned pi0.5 policy closed-loop | Evaluate the model |
+| `eval_replay_ik.py` | Replays a recorded demo's ground-truth actions (no policy) | **Validate that execution is correct** before trusting any policy result |
+| `ik_fk_helpers.py` | Shared `FrankaKinematics` (FK + IK) | Imported by both — do not duplicate solver setup |
+
+> **⚠️ The single most important fact.** The arm half of the 24-dim state/action is **NOT 7 joint angles** — it is a 7-D Cartesian **end-effector pose** `[x, y, z, qx, qy, qz, qw]` (position in metres + a unit quaternion). The hand half is 17 ORCA-hand dims. An older version fed this pose straight into the FR3's joint targets via a "joint permutation" — a category error that made every earlier result meaningless. The current scripts handle it correctly:
+> - **Observation:** sim joint angles → **forward kinematics** → EE pose → policy state.
+> - **Action:** policy EE pose → **inverse kinematics** (Lula) → joint targets.
+>
+> The demo EE-pose convention (resolved 2026-06-03, see §7.5): **base frame · quaternion `xyzw` (scalar-last) · control point `panda_hand` · absolute targets · 50 Hz**.
 
 Timing (RTX 3090, 3000 steps):
 
@@ -440,26 +454,58 @@ print('jaxtyping', jaxtyping.__version__)
 
 ### 7.3 Running an Evaluation
 
-#### Standard submit command
+`submit.sh` takes the **script name as its first argument** (`$1`, default `eval_script_1.py`) and runs `/workspace/<script>`. It uses `$USER` throughout and **auto-detects** the openpi clone (works whether it's at `/cluster/scratch/$USER/openpi` or `$HOME/openpi`). Env vars `EE_FRAME`, `QUAT_WXYZ`, `POSE_IN_BASE`, `HAND_INVERT` are forwarded into the container.
 
-Pull the latest eval script from the repo and submit:
+#### Step 1 — Copy the scripts into the workspace
+
+The eval scripts run as `/workspace/<script>` (= `pi0_test/`), so they must be **copied there** (the repo clone is bound separately for `openpi` imports). Always copy the **shared helper too** — both scripts import it:
 
 ```bash
 cd /cluster/scratch/$USER/openpi && git pull && \
-cp 3dvision-experiments/isaac-sim/eval_script_1.py /cluster/scratch/$USER/pi0_test/eval_script_1.py && \
-sed -i 's/\r//' /cluster/scratch/$USER/submit.sh && \
-sbatch --partition=gpu.4h --time=00:30:00 --mem-per-cpu=8G --cpus-per-task=8 --gpus=rtx_3090:1 \
-  /cluster/scratch/$USER/submit.sh
+cp 3dvision-experiments/isaac-sim/ik_fk_helpers.py             /cluster/scratch/$USER/pi0_test/ && \
+cp 3dvision-experiments/isaac-sim/eval_script_object_in_bowl.py /cluster/scratch/$USER/pi0_test/ && \
+cp 3dvision-experiments/isaac-sim/eval_replay_ik.py            /cluster/scratch/$USER/pi0_test/ && \
+cp 3dvision-experiments/isaac-sim/submit.sh                    /cluster/scratch/$USER/submit.sh && \
+sed -i 's/\r//' /cluster/scratch/$USER/submit.sh
 ```
 
-`submit.sh` uses `$USER` throughout — no path edits needed for any user.
+#### Step 2a — Run the policy eval (fine-tuned pi0.5)
+
+```bash
+cd /cluster/scratch/$USER/pi0_test && \
+EE_FRAME=panda_hand QUAT_WXYZ=0 sbatch \
+  --partition=gpu.4h --time=00:30:00 --mem-per-cpu=8G --cpus-per-task=8 --gpus=rtx_3090:1 \
+  /cluster/scratch/$USER/submit.sh eval_script_object_in_bowl.py
+```
+
+Outputs `pi0_test/evaluation.mp4` + `results.csv`. (`EE_FRAME`/`QUAT_WXYZ` are already the script defaults; shown here so it's explicit.)
+
+#### Step 2b — (recommended first) Validate execution with the GT replay
+
+Before trusting any policy run, confirm the FK/IK pipeline reproduces a real demo. Extract one episode's actions, then replay them — **no policy, no checkpoint needed**:
+
+```bash
+# one-time per episode: extract demo_actions.npz (login node, h5py venv)
+source ~/venvs/3dv/bin/activate && python ~/scripts/extract_demo_npz.py 20250804_142656
+# then replay it
+cd /cluster/scratch/$USER/pi0_test && \
+EE_FRAME=panda_hand QUAT_WXYZ=0 sbatch \
+  --partition=gpu.4h --time=00:30:00 --mem-per-cpu=8G --cpus-per-task=8 --gpus=rtx_3090:1 \
+  /cluster/scratch/$USER/submit.sh eval_replay_ik.py
+```
+
+Outputs `evaluation_replay_ik.mp4` + `results_replay_ik.csv`. A correct run shows **~100% IK success** in the log and the gripper tracking the demo, pointing **down**. (See §7.5 for how the convention was nailed and how to re-sweep if it ever looks wrong.)
+
+> **Mem flag:** never pass `--mem=` (Euler rejects "memory by node"). Use only `--mem-per-cpu`.
 
 #### Monitoring
 
 ```bash
 squeue -u $USER                                          # check status, note NODELIST
-tail -f /cluster/scratch/$USER/slurm-<JOBID>.out         # live log
+tail -f /cluster/scratch/$USER/pi0_test/slurm-<JOBID>.out   # live log (sbatch was run from pi0_test)
 ```
+
+Watch for the `[submit]` line (confirms it resolved `OPENPI_DIR`/`EE_FRAME`) and, in the loop, the `ik_ok` rate.
 
 #### Download results
 
@@ -468,7 +514,9 @@ rsync -avP $USER@euler.ethz.ch:/cluster/scratch/$USER/pi0_test/evaluation.mp4 ./
 rsync -avP $USER@euler.ethz.ch:/cluster/scratch/$USER/pi0_test/results.csv ./
 ```
 
-### 7.4 How eval_script_1.py Works
+### 7.4 How the Eval Works (FK/IK internals)
+
+Applies to both `eval_script_object_in_bowl.py` and `eval_replay_ik.py`.
 
 #### Startup sequence
 
@@ -481,35 +529,49 @@ rsync -avP $USER@euler.ethz.ch:/cluster/scratch/$USER/pi0_test/results.csv ./
 
 `kitchen_scene_1.usd` contains the Franka FR3, table, plate, and crate. However, the USD payload references for the table, plate, crate, and robot all point to Omniverse S3 URLs — compute nodes have no internet. `eval_script_1.py` patches each USD prim's payload at runtime to point to local files under `/workspace/assets/`.
 
-#### Joint permutation
+#### FK observation / IK action (replaces the old "joint permutation")
 
-Isaac Sim's Franka FR3 reports joints in a different order than the Egoverse training data. Specifically, joint indices 3 and 5 are swapped. A self-inverse permutation `[0,1,2,5,4,3,6]` is applied in both directions:
+> **Do not reintroduce a joint permutation.** The arm state/action is an EE pose, not joints (§7.1). The old `[0,1,2,5,4,3,6]` permutation that fed a pose into joint targets is the bug this whole pipeline exists to fix.
+
+All FK/IK goes through one shared object (`ik_fk_helpers.FrankaKinematics`):
 
 ```python
-_PERM = [0, 1, 2, 5, 4, 3, 6]
+import ik_fk_helpers                       # lives at /workspace; import AFTER SimulationApp starts
+kin = ik_fk_helpers.FrankaKinematics(ee_frame="panda_hand", quat_wxyz=False)
 
-# Reading state for the policy (sim → training frame):
-obs_joints = sim_joints[_PERM]
+# OBSERVATION: sim joints -> EE pose for the policy state
+state[:7]   = kin.fk(joint_pos[:7])        # [x,y,z, qx,qy,qz,qw] base frame
+state[7:24] = hand_state                    # 17 ORCA-hand dims (autoregressive)
 
-# Writing action back to sim (training → sim frame):
-sim_targets = policy_action[_PERM]
+# ACTION: policy EE pose -> joint targets
+arm_joints, ik_ok = kin.ik(action[:7], warmstart=prev_joints)
+if ik_ok:
+    prev_joints = arm_joints                # warmstart next solve; hold previous on failure
 ```
 
-Without this, the policy receives out-of-distribution joint states and outputs meaningless actions.
+`pose7` everywhere is `[x, y, z, q...]` in the **stored** quaternion order (`xyzw` when `quat_wxyz=False`). Lula uses `wxyz` internally; the helper converts. Lula computes in the **robot base frame**, which is exactly the demo convention — so no base transform is needed even though the FR3 sits off-origin in the scene.
 
-#### Home position warmup
+#### Home position
 
-Before the main policy loop, the robot is driven to the training home position over 100 warmup steps:
+The arm is IK'd to a fixed starting EE pose (a typical demo frame-0: above the workspace, gripper down) over 100 warmup steps, so the **first observation is in-distribution**:
 ```python
-HOME_TRAIN = [0.476, 0.120, 0.292, 0.994, 0.105, -0.025, -0.009]
+START_EE_POSE = [0.47, 0.02, 0.28, 0.997, 0.004, -0.042, -0.057]   # xyzw, base frame
+home_joints, _ = kin.ik(START_EE_POSE, None)   # falls back to the Franka ready pose if IK fails
 ```
-Joint j3 (sim idx 3, FR3 j4) has target -0.025 which is outside the sim's joint limit [-3.04, -0.152] and gets clamped to -0.152. Joint j5 only reaches ~0.689 in 100 steps but the policy drives it further within the first 50 policy steps.
+
+#### Hand (gripper)
+
+Demos use a 17-DOF ORCA hand; the sim FR3 has a 2-finger gripper. The eval maps overall hand flexion → finger width (per-episode normalized so it actually modulates). It is a **coarse proxy**, not a faithful hand — set `HAND_INVERT=1` if open/closed comes out reversed.
+
+#### Control rate
+
+`World(..., physics_dt=1/50, rendering_dt=1/50)` — one `world.step()` = one 50 Hz tick = one demo frame = one 50-fps video frame. The Isaac default (1/60) desyncs the control rate from training; do not leave it unset.
 
 #### EMA smoothing
 
-Actions from the policy are smoothed before application to reduce chunk-boundary jitter:
+IK joint targets are smoothed before application to reduce chunk-boundary jitter:
 ```python
-smoothed_cmd = 0.4 * full_cmd + 0.6 * smoothed_cmd
+smoothed_cmd = 0.8 * full_cmd + 0.2 * smoothed_cmd
 franka.apply_action(ArticulationAction(joint_positions=smoothed_cmd))
 ```
 
@@ -533,7 +595,31 @@ Diagnostic images are saved at init: `policy_cam_init.png` and `policy_cam_step0
 
 The `ov_home` bind is critical: Isaac Sim writes Warp kernel caches and texture data using the C library `getpwuid()` (not `$HOME`), which resolves to `/cluster/home/$USER`. That path is read-only on compute nodes. Binding a writable scratch directory over it prevents crashes.
 
-### 7.5 Recovering After Scratch Purge
+### 7.5 Validating Execution & the EE-Pose Convention
+
+Three helpers (in `3dvision-experiments/`) nailed and verify the convention. Run the first two on the **login node** (`source ~/venvs/3dv/bin/activate`, has `h5py`); the third is the GPU replay.
+
+| Script | Where | Purpose |
+|--------|-------|---------|
+| `infer_ee_convention.py` | login node | Infer frame / quaternion order / absolute-vs-delta **from the data alone** — no Isaac, runs in seconds |
+| `extract_demo_npz.py` | login node | Pull one episode's actions into `pi0_test/demo_actions.npz` for the replay (`python extract_demo_npz.py <episode_id>`) |
+| `eval_replay_ik.py` | GPU (Isaac) | Ground-truth replay + one-boot frame sweep |
+
+**The convention (locked 2026-06-03): base frame · `xyzw` · `panda_hand` · absolute · 50 Hz.** How each piece was determined:
+- **Frame & absolute/delta** — `infer_ee_convention.py`: positions sit 0.46–0.62 m from origin (inside the FR3's 0.855 m reach ⇒ base frame); actions correlate ~0.95 with `qpos` at small RMS ⇒ absolute targets in the same frame.
+- **Control point** — the frame sweep in `eval_replay_ik.py` solves IK for every candidate on frame 0 in a single boot: `panda_hand` gives **100% IK success** vs `right_gripper`'s 82% (TCP-offset frames miss some targets). `panda_link8` (the flange) differs only by joint-7's exact 45° (π/4) hand-mount roll.
+- **Quaternion order** — the data is genuinely ambiguous (a gripper held pointing down looks identical in sign-stability whether `wxyz` or `xyzw`); the **video** decided it: `wxyz` pointed the gripper UP (wrong), `xyzw` points it DOWN (correct).
+
+**If a replay ever looks wrong, re-sweep without editing code** (env vars are forwarded by `submit.sh`):
+```bash
+EE_FRAME=panda_link8 sbatch <flags> /cluster/scratch/$USER/submit.sh eval_replay_ik.py   # different control point
+QUAT_WXYZ=1          sbatch <flags> /cluster/scratch/$USER/submit.sh eval_replay_ik.py   # flip quaternion order
+```
+The `[sweep]` block in the log lists every candidate frame's IK success + posture. Tunables at the top of `eval_replay_ik.py` (`EE_FRAME`, `QUAT_WXYZ`, `POSE_IN_BASE`, `HAND_INVERT`) are all env-overridable.
+
+**Reading `results.csv`** (policy eval): columns `step, infer_ms, ik_ok, tx, ty, tz, j0..j8`. A healthy run has `ik_ok`≈1 throughout; `tx,ty,tz` is the commanded EE target — its span and net start→end displacement tell you whether the policy is **reaching** (large, directed) or **hovering** (tiny net, large jittery path).
+
+### 7.6 Recovering After Scratch Purge
 
 Euler auto-deletes files not accessed in 15 days. When this happens, run these recovery commands on the login node in order:
 
@@ -585,25 +671,42 @@ for tex in BaseColor Metallic Normal Roughness; do wget -q -O "$ASSETS/plate/Tex
 
 **Note:** `isaac_packages/` was not purged in the 2026-05-26 scratch purge because it had been recently accessed. Don't count on this.
 
-### 7.6 Current Status and Open Problems
+### 7.7 Current Status and Open Problems
 
-**As of 2026-05-26:** The pipeline runs end-to-end cleanly (3000 steps, exit 0, ~12 min). The robot reaches the correct starting joint distribution. However, **the arm barely moves during the policy loop** — joint positions stay within ±0.05 rad of the home position.
+**As of 2026-06-04 — execution pipeline VALIDATED, policy does not yet do the task.**
 
-**Root cause (hypothesis):** Sim-to-real visual domain gap. The model was trained on real Aria egocentric images (480×640, human hand visible, real-world lighting). The sim camera produces rendered 3D geometry — a completely different visual distribution. For out-of-distribution inputs, the policy collapses to predicting training-mean actions, which look like "do almost nothing."
+The big correction: every result before 2026-06-03 was produced with the arm action fed in **wrong** (EE pose dumped into joint targets via the old permutation). The "stuck arm," camera-FoV experiments, and visual-gap conclusions from that era are **inconclusive** — they sat on broken execution. The FK/IK rewrite (§7.4) fixes this.
 
-**What has been tried and verified working:**
-- Joint permutation `[0,1,2,5,4,3,6]` — correct, confirmed by joint range matching
-- Home position warmup — robot reaches training joint distribution before policy loop
-- EMA smoothing — reduces jitter but doesn't fix the core issue
-- Full scene textures (MDL shaders + PNG textures for all objects)
-- Language command matches training label: `"put the object in the bowl"`
-- Camera repositioned from bird's-eye to eye-level (0.7, -1.5, 2.0)
+**GT replay (validation):** with `xyzw` + `panda_hand` + 1/50 physics, `eval_replay_ik.py` reproduces a real demo at **100% IK success**, gripper pointing down, matching the recorded `episode.mp4` (the 23 s vs 39 s duration gap was just the GT viz's 30-fps encode). Execution is trustworthy.
 
-**Likely next directions:**
-1. Match camera FoV to Aria RGB (76° hFoV) — currently using Isaac Sim default (~60°)
-2. Domain randomization or photorealistic rendering in the sim
-3. Evaluate on real Franka hardware to separate policy quality from domain gap
-4. Add real Aria-style hand overlay in the sim camera frame
+**Policy eval (fine-tuned, step 29999), first clean run:**
+- Pipeline: **100% IK success**, arm active (joint path ~108 rad), gripper modulates, no crashes.
+- Behavior: the policy **hovers** — commanded EE target stays in a ~10 cm box (`x` span 0.09, `y` 0.10, `z` 0.16 m), **net start→end displacement only ~0.10 m** over 60 s, while total EE path is ~28 m (jitter in place). It sits near the **mean training pose** and never commits a reach/grasp.
+
+**Interpretation (now a genuine policy readout, not an execution artifact):** the arm is *not* frozen — it's active but task-aimless, outputting ~the mean absolute pose regardless of the image. Two contributing causes:
+1. **Visual domain gap** — trained on real Aria egocentric RGB (human hand in frame, real textures); the sim view (rendered robot-from-above, no hand) is OOD ⇒ image carries little signal.
+2. **Undertraining** — only 5 of 78 episodes; absolute-pose targets let the loss be satisfied by predicting "near the mean pose."
+
+**Next directions (ordered):**
+1. **Isolate the cause:** run the same fine-tuned policy open-loop on **real held-out frames** (`run_inference`, integrating predicted EE poses). Reaches there but hovers in sim ⇒ visual gap dominates; hovers on both ⇒ undertraining.
+2. **A/B vs base:** port the FK/IK pipeline into `eval_script_base_object_in_bowl.py` (it still has the old bug) so base-vs-fine-tuned is measured with both executing correctly.
+3. **Retrain on 5 → 78 episodes** (largest lever if undertraining).
+4. Close the visual gap (Aria FoV/realism, domain randomization) — only worth it once 1–2 show the gap is the binding constraint.
+
+### 7.8 Eval Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `ModuleNotFoundError: ik_fk_helpers` | Helper not copied into the workspace | `cp 3dvision-experiments/isaac-sim/ik_fk_helpers.py /cluster/scratch/$USER/pi0_test/` (§7.3 Step 1) — both scripts need it |
+| `sbatch: error: ... memory by node is not supported` | Passed `--mem=` | Use only `--mem-per-cpu`; never `--mem` |
+| Replay: `FileNotFoundError ... demo_actions.npz` | Episode not extracted | Run `python ~/scripts/extract_demo_npz.py <episode_id>` on the login node first |
+| Low IK success / arm visibly twisted | Wrong `EE_FRAME` or `QUAT_WXYZ` | Re-sweep per §7.5: `EE_FRAME=panda_link8` or `QUAT_WXYZ=1`. Defaults `panda_hand` + `xyzw` are correct for `object_in_bowl` |
+| Gripper faces UP, not down | `QUAT_WXYZ=1` (wrong order) | Use `QUAT_WXYZ=0` (xyzw) — the validated default |
+| Gripper closes at the wrong moment | Coarse 17-DOF→2-finger hand map, flexion sign | `HAND_INVERT=1` |
+| Replay looks too fast/slow vs the GT viz | GT `episode.mp4` is encoded at ~30 fps (display only); sim is real-time 50 fps | Not a bug — compare **motion**, not duration. Confirm `physics_dt=1/50` is set |
+| Path-mangled long path on the cluster shell | Terminal wraps long pasted lines, inserting spaces | Use the helper scripts (`extract_demo_npz.py` takes just an episode id) instead of inline long paths |
+| Policy runs but the arm **hovers** near start | Expected current behavior, **not** an execution bug | See §7.7 — the policy collapses to ~the mean pose on OOD sim images |
+| `typing_extensions` / `datetime.UTC` / `franka.get_joint_positions() is None` | Known Isaac 3.10 quirks | Already handled in the scripts; see §9 for details if reintroduced |
 
 ---
 
