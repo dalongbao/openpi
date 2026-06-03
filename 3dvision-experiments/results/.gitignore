@@ -1,0 +1,3 @@
+# Eval outputs (videos / CSVs / frames) are large — keep them local, don't commit.
+*
+!.gitignore

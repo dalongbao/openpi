@@ -255,7 +255,9 @@ _add_sphere_object(_stage, "/World/object", _OBJECT_POS)
 _add_bowl(_stage, "/World/bowl", _BOWL_POS)
 _make_table_wooden(_stage)
 
-world = World(stage_units_in_meters=1.0)
+# Data is 50 Hz; step physics at 1/50 s so the policy runs at its training control rate
+# (Isaac default is 1/60, which would desync observation/action cadence from training).
+world = World(stage_units_in_meters=1.0, physics_dt=1.0 / 50.0, rendering_dt=1.0 / 50.0)
 world.reset()
 
 # --- Robot ---
@@ -297,14 +299,24 @@ print(f"[init] Saved policy camera preview → /workspace/policy_cam_init.png")
 
 
 
-# Joint permutation: Isaac Sim FR3 vs Egoverse training data differ in dims 3 and 5.
-# Isaac Sim idx3 = fr3_joint4 (elbow, always negative, limits [-3.04, -0.152] rad)
-# Isaac Sim idx5 = fr3_joint6 (wrist, always positive, limits [0.544, 4.52] rad)
-# Training dim3 is always strongly positive (~0.69-1.00) → corresponds to FR3 j6 (sim idx5)
-# Training dim5 is mostly negative (~-0.43 to 0.19) → corresponds to FR3 j4 (sim idx3)
-# Permutation: sim[0,1,2,3,4,5,6] ↔ training[0,1,2,5,4,3,6]
-_SIM_TO_TRAIN = [0, 1, 2, 5, 4, 3, 6]   # sim_idx -> training_dim
-_TRAIN_TO_SIM = [0, 1, 2, 5, 4, 3, 6]   # training_dim -> sim_idx (same permutation: self-inverse)
+# --------------------------------------------------------------------
+# FK/IK — the arm half of state/action is an EE POSE, not joints (convention
+# resolved 2026-06-03: base frame, xyzw, panda_hand, absolute). So:
+#   observation arm state = FK(sim joints)   [sim joints -> EE pose]
+#   action execution      = IK(policy pose)  [EE pose -> joint targets]
+# This replaces the old (wrong) "_SIM_TO_TRAIN permutation feeding pose into joints".
+# --------------------------------------------------------------------
+sys.path.insert(0, "/workspace")
+import ik_fk_helpers
+
+EE_FRAME  = os.environ.get("EE_FRAME", "panda_hand")
+QUAT_WXYZ = os.environ.get("QUAT_WXYZ", "0").lower() in ("1", "true", "yes", "y")
+kin = ik_fk_helpers.FrankaKinematics(ee_frame=EE_FRAME, quat_wxyz=QUAT_WXYZ)
+
+# Starting EE pose (base frame, stored xyzw) ~ a typical demo frame-0: gripper above the
+# workspace pointing down. IK'd once for the home posture so the first observation is in
+# distribution. (xyzw frame-0 [0.997,...] = ~173° about +x = pointing down.)
+START_EE_POSE = np.array([0.47, 0.02, 0.28, 0.997, 0.004, -0.042, -0.057], dtype=np.float64)
 
 
 # Training-mean hand state (dims 7-23) across all 5 training episodes.
@@ -320,10 +332,12 @@ _hand_state = HAND_MEAN.copy()   # updated each step
 
 
 def build_observation(ext_img_uint8, joint_pos):
+    # Arm state = FK(current 7 arm joints) -> EE pose [x,y,z, xyzw] in base frame,
+    # matching the training state (qpos_arm is an EE pose, same convention as actions).
+    ee_pose = kin.fk(joint_pos[:7])           # (7,) stored convention
     state = np.zeros(24, dtype=np.float32)
-    for sim_idx, train_dim in enumerate(_SIM_TO_TRAIN):
-        state[train_dim] = joint_pos[sim_idx]
-    state[7:24] = _hand_state    # use prev predicted hand action, not zeros
+    state[:7]   = ee_pose.astype(np.float32)
+    state[7:24] = _hand_state                 # prev predicted hand action (in-distribution)
     return {
         "observation/image": ext_img_uint8,
         "observation/state": state,
@@ -342,7 +356,7 @@ def to_gripper_positions(gripper_cmd):
 # --------------------------------------------------------------------
 csv_file = open(RESULTS_CSV, "w", newline="")
 writer   = csv.writer(csv_file)
-writer.writerow(["step", "infer_ms"] + [f"j{i}" for i in range(9)])
+writer.writerow(["step", "infer_ms", "ik_ok", "tx", "ty", "tz"] + [f"j{i}" for i in range(9)])
 
 # HD video from RecordingCamera at 50 fps
 video_writer = cv2.VideoWriter(
@@ -364,18 +378,16 @@ try:
     for _ in range(20):
         world.step(render=True)
 
-    # Move the robot to the training home position before running the policy.
-    # dim-to-sim permutation: [0,1,2,5,4,3,6] so training dims [0,1,2,3,4,5,6]
-    # map to sim indices [0,1,2,5,4,3,6].
-    # FR3 j4 (sim idx3) has upper limit -0.152; dim5 home ≈ -0.025 so clip to -0.152.
-    # FR3 j6 (sim idx5) home = dim3 ≈ 0.994.
-    HOME_TRAIN = np.array([0.476, 0.120, 0.292, 0.994, 0.105, -0.025, -0.009], np.float32)
+    # Home: IK the starting EE pose so the first observation is in-distribution.
+    home_joints, home_ok = kin.ik(START_EE_POSE, None)
+    if not home_ok or home_joints is None:
+        print("[WARN] home IK failed — falling back to Franka ready pose")
+        home_joints = np.array([0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785])
+    _warm = np.asarray(home_joints, dtype=np.float64)   # IK warmstart carried through the loop
     home_cmd = np.zeros(9, dtype=np.float32)
-    for train_dim, sim_idx in enumerate(_TRAIN_TO_SIM):
-        home_cmd[sim_idx] = HOME_TRAIN[train_dim]
-    home_cmd[7] = 0.02
-    home_cmd[8] = 0.02
-    print(f"[init] Moving to home: sim cmds = {home_cmd[:7].round(3)}")
+    home_cmd[:7] = home_joints
+    home_cmd[7] = home_cmd[8] = 0.02
+    print(f"[init] Home via IK(START_EE_POSE): ok={home_ok} joints={np.round(home_joints, 3)}")
     for _ in range(100):
         franka.apply_action(ArticulationAction(joint_positions=home_cmd))
         world.step(render=True)
@@ -410,26 +422,30 @@ try:
 
         # Log raw policy arm actions at key steps to detect OOD/frozen policy
         if step == 0:
-            print(f"[diag] chunk shape={last_action_chunk.shape}  arm actions (first 3 chunks):")
+            print(f"[diag] chunk shape={last_action_chunk.shape}  arm EE-pose actions (first 3 chunks):")
             for _ci in range(min(3, len(last_action_chunk))):
                 _a = last_action_chunk[_ci]
-                print(f"  chunk[{_ci}] arm={np.round(_a[:7], 3)}")
+                print(f"  chunk[{_ci}] EE-pose={np.round(_a[:7], 3)}")
             cv2.imwrite("/workspace/policy_cam_step0.png",
                         cv2.cvtColor(policy_img, cv2.COLOR_RGB2BGR))
         if step % 500 == 0 and step > 0:
-            print(f"[diag] step {step} action train_arm={np.round(action[:7], 3)}")
+            print(f"[diag] step {step} action EE-pose={np.round(action[:7], 3)}")
 
         # ---- ACT ----
+        arm_pose      = action[:NUM_ARM_JOINTS]    # policy output is an EE pose (base, xyzw)
         hand_action   = action[NUM_ARM_JOINTS:]
         gripper_cmd   = float(np.mean(hand_action[:3]))
+        _hand_state[:] = hand_action               # autoregressive hand state (in-distribution)
 
-        # Update hand state for next observation (autoregressive — keeps state in-distribution)
-        _hand_state[:] = hand_action
+        # EE pose -> joint targets via IK; warmstart from the previous solution for continuity.
+        arm_joints, ik_ok = kin.ik(arm_pose, _warm)
+        if ik_ok and arm_joints is not None:
+            _warm = np.asarray(arm_joints, dtype=np.float64)
+        # else: hold the previous joints (don't jump the arm on an IK failure)
 
         finger_l, finger_r = to_gripper_positions(gripper_cmd)
         full_cmd = np.zeros(9, dtype=np.float32)
-        for train_dim, sim_idx in enumerate(_TRAIN_TO_SIM):
-            full_cmd[sim_idx] = action[train_dim]
+        full_cmd[:7] = _warm
         full_cmd[7] = finger_l
         full_cmd[8] = finger_r
         # Smooth joint targets to reduce chunk-boundary jitter
@@ -445,8 +461,10 @@ try:
         # ---- RECORD (HD from RecordingCamera) ----
         video_writer.write(cv2.cvtColor(hd_img, cv2.COLOR_RGB2BGR))
 
-        # ---- LOG ----
-        writer.writerow([step, f"{infer_ms:.1f}"] + joint_pos.tolist())
+        # ---- LOG ---- (tx,ty,tz = commanded EE-pose target this step)
+        writer.writerow([step, f"{infer_ms:.1f}", int(ik_ok),
+                         f"{arm_pose[0]:.3f}", f"{arm_pose[1]:.3f}", f"{arm_pose[2]:.3f}"]
+                        + joint_pos.tolist())
         if step % 50 == 0:
             jp = joint_pos[:7]
             print(f"[run] step {step:4d} | infer {infer_ms:5.1f}ms | "

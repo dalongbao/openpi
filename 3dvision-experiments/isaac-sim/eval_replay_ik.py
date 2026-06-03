@@ -22,6 +22,7 @@ simulation_app = SimulationApp(CONFIG)
 
 import csv
 import math
+import os
 import traceback
 import numpy as np
 import cv2
@@ -32,13 +33,10 @@ from omni.isaac.core.articulations import Articulation
 from omni.isaac.core.utils.types import ArticulationAction
 from omni.isaac.sensor import Camera
 
-# Lula IK (try deprecated then new namespace)
-try:
-    from omni.isaac.motion_generation import interface_config_loader
-    from omni.isaac.motion_generation.lula import LulaKinematicsSolver
-except Exception:
-    from isaacsim.robot_motion.motion_generation import interface_config_loader
-    from isaacsim.robot_motion.motion_generation.lula import LulaKinematicsSolver
+# Shared FK/IK (imported after SimulationApp; lives at /workspace/ik_fk_helpers.py)
+import sys
+sys.path.insert(0, "/workspace")
+import ik_fk_helpers
 
 USD_PATH    = "/workspace/kitchen_scene_1.usd"
 DEMO_NPZ    = "/workspace/demo_actions.npz"
@@ -47,10 +45,25 @@ VIDEO_PATH  = "/workspace/evaluation_replay_ik.mp4"
 POLICY_CAM_RES = (224, 224)
 HD_VIDEO_RES   = (1280, 720)
 
-# --- tunables (verify from the first run's diagnostics) ---
-EE_FRAME     = "right_gripper"   # fallback candidates tried automatically if this is missing
-QUAT_WXYZ    = True              # action[3:7] = [qw,qx,qy,qz]
-POSE_IN_BASE = True              # action pose is in the FR3 base frame
+# --- tunables ---
+# (1) FRAME and (2) QUAT ORDER and (3) ABS/DELTA confirmed by infer_ee_convention.py:
+#     base frame, scalar-first wxyz, absolute targets. Only the control-point (EE_FRAME)
+#     is unresolved by data — sweep it here. Override per-run with EE_FRAME=<name> env var
+#     so you don't edit code between sweep runs, e.g.:
+#       EE_FRAME=panda_link8 .../python.sh eval_replay_ik.py
+# Franka gotcha: panda_hand/right_gripper is rotated -45° about z vs the panda_link8 flange,
+# so the wrong frame shows up as a constant wrist twist (the bug we're chasing).
+def _envbool(name, default):
+    v = os.environ.get(name)
+    return default if v is None or v == "" else v.lower() in ("1", "true", "yes", "y")
+
+EE_FRAME     = os.environ.get("EE_FRAME", "right_gripper")  # candidates auto-tried if missing
+# QUAT order is genuinely ambiguous from data (a grasp held ~pointing-down looks like a
+# constant ~180°-about-x pose in xyzw, which mimics near-identity wxyz in sign-stability).
+# Decided by the VIDEO: wxyz made the gripper face UP -> wrong; xyzw points it DOWN. Override
+# per-run with QUAT_WXYZ=0/1.
+QUAT_WXYZ    = _envbool("QUAT_WXYZ", False)   # action[3:7] = [qx,qy,qz,qw]  (xyzw, scalar-last)
+POSE_IN_BASE = _envbool("POSE_IN_BASE", True) # action pose is in the FR3 base frame (CONFIRMED)
 
 _demo = np.load(DEMO_NPZ)
 demo_arm  = np.asarray(_demo["actions_arm"], dtype=np.float64)    # (N,7) EE pose
@@ -142,7 +155,10 @@ if _cp.IsValid():
     _c.CreateHorizontalApertureAttr(_ha); _c.CreateVerticalApertureAttr(_ha)
     _c.CreateFocalLengthAttr(_ha/(2*math.tan(math.radians(76.0)/2)))
 
-world = World(stage_units_in_meters=1.0); world.reset()
+# Data is 50 Hz; step physics at 1/50 s so one world.step() == one demo tick == one 50fps
+# video frame (real time). Default would be 1/60, desyncing data/physics/video.
+world = World(stage_units_in_meters=1.0, physics_dt=1.0 / 50.0, rendering_dt=1.0 / 50.0)
+world.reset()
 franka = Articulation(prim_path="/World/fr3", name="franka"); franka.initialize()
 print(f"[init] Franka has {franka.num_dof} DOF; joint names: {franka.dof_names}")
 recording_cam = Camera(prim_path="/World/RecordingCamera", resolution=HD_VIDEO_RES); recording_cam.initialize()
@@ -157,31 +173,28 @@ def get_frame(cam,res):
 cv2.imwrite("/workspace/policy_cam_init.png", cv2.cvtColor(get_frame(external_cam,POLICY_CAM_RES), cv2.COLOR_RGB2BGR))
 
 # --------------------------------------------------------------------
-# IK SOLVER
+# IK SOLVER (shared with the policy eval via ik_fk_helpers)
 # --------------------------------------------------------------------
-_cfg = interface_config_loader.load_supported_lula_kinematics_solver_config("Franka")
-solver = LulaKinematicsSolver(**_cfg)
-_frames = list(solver.get_all_frame_names())
-_jnames = list(solver.get_joint_names())
-print(f"[ik] Lula joint names: {_jnames}")
-print(f"[ik] Lula frame names: {_frames}")
-if EE_FRAME not in _frames:
-    for cand in ("right_gripper", "panda_hand", "panda_rightfinger", "tool0", "fr3_hand", "panda_link8"):
-        if cand in _frames:
-            EE_FRAME = cand; break
-print(f"[ik] Using EE frame: {EE_FRAME}")
+kin = ik_fk_helpers.FrankaKinematics(ee_frame=EE_FRAME, quat_wxyz=QUAT_WXYZ)
+solver = kin.solver          # for the frame-sweep diagnostic below
+_frames = kin.frames
+EE_FRAME = kin.ee_frame
+solve_ik = kin.ik            # (pose7, warmstart) -> (joints, ok), stored quat convention
 
 
-def solve_ik(pose7, warmstart):
-    pos = np.asarray(pose7[:3], dtype=np.float64)
-    q = np.asarray(pose7[3:7], dtype=np.float64)
-    quat_wxyz = q if QUAT_WXYZ else np.array([q[3], q[0], q[1], q[2]])
-    joints, ok = solver.compute_inverse_kinematics(EE_FRAME, pos, quat_wxyz, warmstart)
-    return joints, bool(ok)
+# Hand: demos use a 17-DOF ORCA hand; the sim FR3 has a 2-finger gripper. Coarse proxy:
+# overall hand flexion -> finger width, normalized to THIS episode's own range so it
+# actually modulates. HAND_INVERT=1 flips it if open/closed comes out reversed.
+_hand_sig = demo_hand.mean(axis=1)                       # (N,) overall flexion proxy
+_hlo, _hhi = np.percentile(_hand_sig, 5), np.percentile(_hand_sig, 95)
+_HAND_INVERT = _envbool("HAND_INVERT", False)
 
+def closure_frac(step):
+    c = float(np.clip((_hand_sig[step] - _hlo) / (_hhi - _hlo + 1e-9), 0.0, 1.0))
+    return 1.0 - c if _HAND_INVERT else c
 
-def to_finger(g):
-    return 0.04 * (1.0 - float(np.clip(g, 0.0, 1.0)))
+def to_finger(frac):
+    return 0.04 * (1.0 - float(frac))                    # frac=1 (closed) -> 0 m width
 
 
 # --------------------------------------------------------------------
@@ -204,6 +217,23 @@ try:
     j0, ok0 = solve_ik(demo_arm[0], None)
     print(f"[ik] first-frame IK success={ok0}  joints={None if j0 is None else np.round(j0,3)}")
 
+    # FRAME SWEEP DIAGNOSTIC: try every plausible control-point on the first pose in ONE boot.
+    # Report IK success + posture so you can compare frames without N full renders.
+    # The right frame is the one whose replayed gripper matches the real demo (judge in the mp4);
+    # this table just tells you which frames are even viable and how different their postures are.
+    _sweep = [f for f in ("panda_link8", "fr3_link8", "panda_hand", "fr3_hand",
+                          "right_gripper", "panda_rightfinger", "tool0") if f in _frames]
+    print(f"[sweep] Testing {len(_sweep)} candidate EE frames on demo_arm[0] "
+          f"(pos={np.round(demo_arm[0][:3],3)}, quat_wxyz={np.round(demo_arm[0][3:7],3)}):")
+    _p0 = np.asarray(demo_arm[0][:3], np.float64)
+    _q0 = np.asarray(demo_arm[0][3:7], np.float64)
+    _q0 = _q0 if QUAT_WXYZ else np.array([_q0[3], _q0[0], _q0[1], _q0[2]])
+    for _f in _sweep:
+        _j, _ok = solver.compute_inverse_kinematics(_f, _p0, _q0, None)
+        print(f"[sweep]   {_f:18s} ik_ok={bool(_ok)}  "
+              f"joints={None if _j is None else np.round(_j,3)}")
+    print(f"[sweep] (set EE_FRAME=<name> to render the full replay for the winner)")
+
     print(f"[run] Replaying {N} EE-pose frames via IK...")
     for step in range(N):
         joints, ok = solve_ik(demo_arm[step], warm)
@@ -212,7 +242,7 @@ try:
             n_ok += 1
             cmd = np.zeros(9, dtype=np.float32)
             cmd[:7] = joints
-            cmd[7] = cmd[8] = to_finger(float(np.mean(demo_hand[step][:3])))
+            cmd[7] = cmd[8] = to_finger(closure_frac(step))
             franka.apply_action(ArticulationAction(joint_positions=cmd))
         # if IK fails, hold previous command (don't move)
         world.step(render=True)
