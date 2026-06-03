@@ -129,26 +129,32 @@ for prim_path, local_usd in _PAYLOAD_PATCHES.items():
     else:
         print(f"[WARN] {prim_path} not found in stage — skipping patch")
 
-# Reposition ExternalCamera to approximate Aria egocentric view.
-# Scene: table top at z≈1.807m, robot at (0.09, 0.07, 1.807), plate at (0.53,-0.41,1.807), crate at (1.46,-0.02,1.807).
-# Original camera was at (0.5, 0, 4.2) looking straight down (bird's-eye) — wrong for training data.
-# Training used Aria glasses at ~eye level looking forward at the workspace.
-# Place camera in front of the scene, at table height, looking toward the robot/objects.
+# ExternalCamera: match Aria RGB FoV + a more egocentric (looking-down-at-workspace) pose.
+# Scene: table top z≈1.807, robot (0.09,0.07,1.807), cube (0.53,-0.41,1.85), bowl (1.46,-0.02,1.807).
+# Aria RGB hFOV: README target is 76°; hardware spec is closer to ~110°. Tune ARIA_HFOV_DEG if needed.
+# Pose: above + slightly in front (operator/-Y side), looking steeply down at the workspace center —
+# closer to a head-mounted egocentric view than the previous near-horizontal standing-back shot.
+ARIA_HFOV_DEG = 76.0
+_CAM_POS    = Gf.Vec3d(0.90, -0.70, 2.90)   # above workspace, on the operator (-Y) side
+_CAM_TARGET = Gf.Vec3d(0.98, -0.20, 1.81)   # workspace center (between cube & bowl), at table height
 _cam_prim = _stage.GetPrimAtPath("/World/ExternalCamera")
 if _cam_prim.IsValid():
     _xf = UsdGeom.Xformable(_cam_prim)
     _xf.ClearXformOpOrder()
-    # Position: y=-1.5m in front of table, x=0.7m centered on workspace, z=2.0m (above table height)
-    # Raised to z=2.5m (0.7m above table at z=1.807) to better match Aria eye-level (~0.7m above table).
-    # Tilt: 20 degrees downward, matching a person standing and looking at the workspace.
-    _xf.AddTranslateOp().Set(Gf.Vec3d(0.7, -1.5, 2.5))
-    # look_dir = normalize((0, 1.8, -0.65)) → 20° downward tilt toward workspace center
-    _look_dir = Gf.Vec3d(0.0, 1.8, -0.65).GetNormalized()
-    _rot = Gf.Rotation(Gf.Vec3d(0.0, 0.0, -1.0), _look_dir)
+    _xf.AddTranslateOp().Set(_CAM_POS)
+    _look_dir = (_CAM_TARGET - _CAM_POS).GetNormalized()
+    _rot = Gf.Rotation(Gf.Vec3d(0.0, 0.0, -1.0), _look_dir)  # camera looks down its local -Z
     _quat = _rot.GetQuat()
     _xf.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(
         Gf.Quatd(_quat.GetReal(), *_quat.GetImaginary()))
-    print(f"[init] ExternalCamera repositioned to (0.7, -1.5, 2.5) looking at workspace (20° down)")
+    # FoV: only the aperture/focalLength ratio matters; square sensor for the 224x224 policy input.
+    _cam = UsdGeom.Camera(_cam_prim)
+    _h_aperture = 36.0
+    _focal = _h_aperture / (2.0 * math.tan(math.radians(ARIA_HFOV_DEG) / 2.0))
+    _cam.CreateHorizontalApertureAttr(_h_aperture)
+    _cam.CreateVerticalApertureAttr(_h_aperture)
+    _cam.CreateFocalLengthAttr(_focal)
+    print(f"[init] ExternalCamera: pos={tuple(_CAM_POS)} -> target={tuple(_CAM_TARGET)}, hFOV={ARIA_HFOV_DEG}deg")
 else:
     print("[WARN] ExternalCamera prim not found — using original position")
 
