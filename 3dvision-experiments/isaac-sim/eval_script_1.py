@@ -261,6 +261,8 @@ try:
     home_cmd = np.zeros(9, dtype=np.float32)
     for train_dim, sim_idx in enumerate(_TRAIN_TO_SIM):
         home_cmd[sim_idx] = HOME_TRAIN[train_dim]
+    home_cmd[3] += -1.8425
+    home_cmd[5] +=  0.8735
     home_cmd[7] = 0.02
     home_cmd[8] = 0.02
     print(f"[init] Moving to home: sim cmds = {home_cmd[:7].round(3)}")
@@ -318,6 +320,8 @@ try:
         full_cmd = np.zeros(9, dtype=np.float32)
         for train_dim, sim_idx in enumerate(_TRAIN_TO_SIM):
             full_cmd[sim_idx] = action[train_dim]
+        full_cmd[3] += -1.8425
+        full_cmd[5] +=  0.8735
         full_cmd[7] = finger_l
         full_cmd[8] = finger_r
         # Smooth joint targets to reduce chunk-boundary jitter
