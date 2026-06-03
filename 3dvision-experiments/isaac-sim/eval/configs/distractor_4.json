@@ -1,0 +1,39 @@
+{
+  "_comment": "4 distractors on the table; everything else baseline. TODO: stage these USDs on Euler under /workspace/assets/distractors/ -- mug.usd, apple.usd, cereal_box.usd, banana.usd. Pull from Omniverse public S3 on the login node then rsync.",
+  "distractors": [
+    {
+      "prim_path": "/World/Distractor_0",
+      "usd_path": "/workspace/assets/distractors/mug.usd",
+      "translate": [0.15, 0.10, 0.78],
+      "rotate_yaw_rad": 0.0
+    },
+    {
+      "prim_path": "/World/Distractor_1",
+      "usd_path": "/workspace/assets/distractors/apple.usd",
+      "translate": [-0.20, 0.20, 0.78],
+      "rotate_yaw_rad": 0.5
+    },
+    {
+      "prim_path": "/World/Distractor_2",
+      "usd_path": "/workspace/assets/distractors/cereal_box.usd",
+      "translate": [0.25, 0.35, 0.78],
+      "rotate_yaw_rad": 1.2
+    },
+    {
+      "prim_path": "/World/Distractor_3",
+      "usd_path": "/workspace/assets/distractors/banana.usd",
+      "translate": [-0.05, 0.45, 0.78],
+      "rotate_yaw_rad": -0.7
+    }
+  ],
+  "dome_intensity": null,
+  "dome_color": null,
+  "plate_pose_offset_m": [0.0, 0.0, 0.0],
+  "plate_yaw_offset_rad": 0.0,
+  "crate_pose_offset_m": [0.0, 0.0, 0.0],
+  "crate_yaw_offset_rad": 0.0,
+  "external_camera_translation_offset_m": [0.0, 0.0, 0.0],
+  "external_camera_rotation_offset_deg": [0.0, 0.0, 0.0],
+  "language_prompt": "put the plate in the crate",
+  "seed": 1
+}
