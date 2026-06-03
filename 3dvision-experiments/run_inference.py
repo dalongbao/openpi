@@ -97,6 +97,7 @@ def evaluate_episode(
         print(f"  episode={h5_path.name}  total={total}  evaluating={len(frame_ids)} chunks of {CHUNK_LEN} steps")
 
         all_pi0_sq, all_zero_sq, all_const_sq = [], [], []
+        all_gt_disp, all_pred_disp = [], []
 
         for i, idx in enumerate(frame_ids):
             gt_chunk = load_gt_chunk(f, idx)
@@ -113,6 +114,9 @@ def evaluate_episode(
             all_zero_sq.append(gt_chunk ** 2)
             # state broadcast: "do nothing" baseline predicts current state for all 10 steps
             all_const_sq.append((state[None, :] - gt_chunk) ** 2)
+            # net arm displacement over the chunk: end-of-chunk target minus start state
+            all_gt_disp.append(gt_chunk[-1, :ARM_DIM] - state[:ARM_DIM])
+            all_pred_disp.append(pred[-1, :ARM_DIM] - state[:ARM_DIM])
 
             if i % 50 == 0 or i == len(frame_ids) - 1:
                 chunk_arm = all_pi0_sq[-1][:, :ARM_DIM].mean()
@@ -126,6 +130,8 @@ def evaluate_episode(
         "pi0": np.concatenate(all_pi0_sq, axis=0),
         "zero": np.concatenate(all_zero_sq, axis=0),
         "const": np.concatenate(all_const_sq, axis=0),
+        "gt_disp": np.stack(all_gt_disp, axis=0),
+        "pred_disp": np.stack(all_pred_disp, axis=0),
     }
 
 
@@ -142,6 +148,26 @@ def print_per_dim(sq_err: np.ndarray, label: str) -> None:
     print(f"  {label} per-dim MSE:")
     print(f"    arm  (dims 0-6):   " + " ".join(f"{v:.3f}" for v in per_dim[:ARM_DIM]))
     print(f"    hand (dims 7-23):  " + " ".join(f"{v:.3f}" for v in per_dim[ARM_DIM:]))
+
+
+def motion_report(pred_disp: np.ndarray, gt_disp: np.ndarray) -> None:
+    """Does the policy COMMAND the right arm motion? (cuts through MSE-dominated-by-stationarity.)
+
+    pred_disp / gt_disp: (N, ARM_DIM) net arm displacement per 10-step chunk
+    (end-of-chunk target minus start state).
+    """
+    print("\n=== Motion / direction (arm, net displacement per 10-step chunk) ===")
+    print(f"  mean |GT disp|   per joint: " + " ".join(f"{v:.3f}" for v in np.abs(gt_disp).mean(0)))
+    print(f"  mean |pred disp| per joint: " + " ".join(f"{v:.3f}" for v in np.abs(pred_disp).mean(0)))
+    gt_mag = np.linalg.norm(gt_disp, axis=1)
+    pred_mag = np.linalg.norm(pred_disp, axis=1)
+    ratio = pred_mag.sum() / (gt_mag.sum() + 1e-9)
+    mask = gt_mag > 1e-3  # only chunks where the demo actually moves
+    pm = np.linalg.norm(pred_disp[mask], axis=1)
+    cos = (pred_disp[mask] * gt_disp[mask]).sum(1) / (pm * gt_mag[mask] + 1e-9)
+    print(f"  magnitude ratio  |pred|/|GT|: {ratio:.3f}   (1.0=matches demo, <1=timid, ~0=frozen)")
+    print(f"  mean cosine(pred,GT) dir:    {np.nanmean(cos):.3f}   (1=right direction, 0=orthogonal, <0=opposite)")
+    print(f"  chunks where GT moves (>1e-3): {int(mask.sum())}/{len(gt_mag)}")
 
 
 def main(
@@ -202,6 +228,7 @@ def main(
 
     # Accumulate squared errors across all episodes.
     all_pi0, all_zero, all_const = [], [], []
+    all_gtd, all_predd = [], []
     skipped = []
     for ep_path in episode_paths:
         try:
@@ -209,6 +236,8 @@ def main(
             all_pi0.append(stats["pi0"])
             all_zero.append(stats["zero"])
             all_const.append(stats["const"])
+            all_gtd.append(stats["gt_disp"])
+            all_predd.append(stats["pred_disp"])
         except BaseException as e:
             print(f"  ERROR in {ep_path.name}: {e} — skipping")
             skipped.append(ep_path.name)
@@ -229,6 +258,7 @@ def main(
     summarize("const state", const_sq)
     print()
     print_per_dim(pi0_sq, label)
+    motion_report(np.concatenate(all_predd, axis=0), np.concatenate(all_gtd, axis=0))
 
 
 if __name__ == "__main__":
