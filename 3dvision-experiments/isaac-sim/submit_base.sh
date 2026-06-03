@@ -11,7 +11,7 @@ export ISAAC_SIM_CACHE_DIR=/cluster/scratch/$USER/isaac_cache
 mkdir -p "$ISAAC_SIM_CACHE_DIR"
 
 WORKSPACE=/cluster/scratch/$USER/pi0_test
-BASE_WEIGHTS=/cluster/work/cvg/data/Egoverse/pi05_base_jax/params
+BASE_WEIGHTS=/cluster/work/cvg/data/Egoverse/pi05_base_jax
 
 mkdir -p "$ISAAC_SIM_CACHE_DIR/kit"
 mkdir -p "$ISAAC_SIM_CACHE_DIR/ov_home"
