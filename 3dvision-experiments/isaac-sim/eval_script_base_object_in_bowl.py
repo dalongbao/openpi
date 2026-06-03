@@ -423,10 +423,12 @@ try:
             for _ci in range(min(3, len(last_action_chunk))):
                 _a = last_action_chunk[_ci]
                 print(f"  chunk[{_ci}] arm={np.round(_a[:7], 3)}")
+            print(f"[diag] action range: min={last_action_chunk[:, :7].min():.3f}  max={last_action_chunk[:, :7].max():.3f}  std={last_action_chunk[:, :7].std():.3f}")
             cv2.imwrite("/workspace/policy_cam_step0.png",
                         cv2.cvtColor(policy_img, cv2.COLOR_RGB2BGR))
         if step % 500 == 0 and step > 0:
             print(f"[diag] step {step} action train_arm={np.round(action[:7], 3)}")
+            print(f"[diag] step {step} action range: min={last_action_chunk[:, :7].min():.3f}  max={last_action_chunk[:, :7].max():.3f}  std={last_action_chunk[:, :7].std():.3f}")
 
         # ---- ACT ----
         hand_action   = action[NUM_ARM_JOINTS:]
@@ -450,6 +452,13 @@ try:
 
         # ---- STEP ----
         world.step(render=True)
+
+        # Commanded vs actual — detect joint limit clamping
+        if step % 200 == 0:
+            actual = franka.get_joint_positions()
+            if actual is not None:
+                diff = np.abs(smoothed_cmd[:7] - actual[:7])
+                print(f"[diag] step {step} cmd={np.round(smoothed_cmd[:7],3)}  actual={np.round(actual[:7],3)}  err={np.round(diff,3)}")
 
         # ---- RECORD (HD from RecordingCamera) ----
         video_writer.write(cv2.cvtColor(hd_img, cv2.COLOR_RGB2BGR))
