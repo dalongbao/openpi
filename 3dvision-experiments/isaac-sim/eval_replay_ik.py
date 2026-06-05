@@ -92,8 +92,10 @@ for _old in ("/World/plate_small", "/World/SM_Crate_A07_Yellow_01_physics"):
     if _p.IsValid():
         _p.SetActive(False)
 
-_OBJECT_POS = (0.527, -0.405, 1.847)
-_BOWL_POS   = (1.463, -0.020, 1.807)
+# Object/bowl XY are derived from the demo trajectory below (after the helpers are
+# defined) so they sit exactly where the gripper grasps and releases. The old
+# hardcoded values were inherited from the plate/crate scene and didn't match the demo.
+_TABLE_TOP_Z = 1.807
 
 def _add_sphere(stage, path, pos, radius=0.04):
     s = UsdGeom.Sphere.Define(stage, path); s.CreateRadiusAttr(radius)
@@ -139,6 +141,38 @@ def _table_wooden(stage, tp="/World/SM_HeavyDutyPackingTable_C02_01"):
     sh.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.75)
     mat.CreateSurfaceOutput().ConnectToSource(sh.ConnectableAPI(), "surface")
     UsdShade.MaterialBindingAPI.Apply(tprim).Bind(mat, bindingStrength=UsdShade.Tokens.strongerThanDescendants)
+
+# --- Derive object & bowl world XY from the demo's grasp/release frames ---
+# demo_arm[:, :3] is the EE position in the FR3 BASE frame; transform it through the
+# fr3 prim's world matrix to get world coords. Grasp = first frame the hand closes,
+# release = first frame it re-opens (the same closure proxy that drives the gripper).
+_xc = UsdGeom.XformCache()
+_T_base = _xc.GetLocalToWorldTransform(_stage.GetPrimAtPath("/World/fr3"))
+
+def _base_to_world_xy(p_base):
+    w = _T_base.Transform(Gf.Vec3d(float(p_base[0]), float(p_base[1]), float(p_base[2])))
+    return (float(w[0]), float(w[1]))
+
+_hsig = demo_hand.mean(axis=1)
+_hlo5, _hhi5 = np.percentile(_hsig, 5), np.percentile(_hsig, 95)
+_clos = np.clip((_hsig - _hlo5) / (_hhi5 - _hlo5 + 1e-9), 0.0, 1.0)
+if _envbool("HAND_INVERT", False):
+    _clos = 1.0 - _clos
+_closed = _clos > 0.5
+if _closed.any() and (~_closed).any():
+    _grasp_f = int(np.argmax(_closed))                  # first open->closed transition
+    _after = _closed[_grasp_f:]
+    _release_f = _grasp_f + (int(np.argmin(_after)) if (~_after).any() else len(_after) - 1)
+else:                                                   # flat hand signal -> geometry fallback
+    _grasp_f = int(np.argmin(demo_arm[:, 2]))
+    _release_f = _grasp_f + int(np.argmax(demo_arm[_grasp_f:, 2]))
+
+_gx, _gy = _base_to_world_xy(demo_arm[_grasp_f][:3])
+_bx, _by = _base_to_world_xy(demo_arm[_release_f][:3])
+_OBJECT_POS = (_gx, _gy, _TABLE_TOP_Z + 0.04)
+_BOWL_POS   = (_bx, _by, _TABLE_TOP_Z)
+print(f"[scene] grasp frame {_grasp_f} -> object world XY ({_gx:.3f}, {_gy:.3f}) | "
+      f"release frame {_release_f} -> bowl world XY ({_bx:.3f}, {_by:.3f})")
 
 _add_sphere(_stage, "/World/object", _OBJECT_POS)
 _add_bowl(_stage, "/World/bowl", _BOWL_POS)
