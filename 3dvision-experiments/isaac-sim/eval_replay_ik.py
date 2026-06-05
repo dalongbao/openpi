@@ -144,8 +144,10 @@ _add_sphere(_stage, "/World/object", _OBJECT_POS)
 _add_bowl(_stage, "/World/bowl", _BOWL_POS)
 _table_wooden(_stage)
 
-# camera (matched)
-_CAM_POS=Gf.Vec3d(0.90,-0.70,2.90); _CAM_TARGET=Gf.Vec3d(0.98,-0.20,1.81)
+# Camera: approximate Aria egocentric view — positioned front-left, angled ~35° down.
+# Robot appears upper-right, sphere+bowl fill the center of the 224x224 frame.
+_CAM_POS    = Gf.Vec3d(-0.2, -0.8, 2.6)
+_CAM_TARGET = Gf.Vec3d(0.8, -0.15, 1.82)
 _cp=_stage.GetPrimAtPath("/World/ExternalCamera")
 if _cp.IsValid():
     _xf=UsdGeom.Xformable(_cp); _xf.ClearXformOpOrder(); _xf.AddTranslateOp().Set(_CAM_POS)
@@ -153,7 +155,7 @@ if _cp.IsValid():
     _xf.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(Gf.Quatd(_q.GetReal(), *_q.GetImaginary()))
     _c=UsdGeom.Camera(_cp); _ha=36.0
     _c.CreateHorizontalApertureAttr(_ha); _c.CreateVerticalApertureAttr(_ha)
-    _c.CreateFocalLengthAttr(_ha/(2*math.tan(math.radians(76.0)/2)))
+    _c.CreateFocalLengthAttr(_ha/(2*math.tan(math.radians(90.0)/2)))
 
 # Data is 50 Hz; step physics at 1/50 s so one world.step() == one demo tick == one 50fps
 # video frame (real time). Default would be 1/60, desyncing data/physics/video.

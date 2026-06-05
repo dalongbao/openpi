@@ -125,9 +125,9 @@ for prim_path, local_usd in _PAYLOAD_PATCHES.items():
 # Aria RGB hFOV: README target is 76°; hardware spec is closer to ~110°. Tune ARIA_HFOV_DEG if needed.
 # Pose: above + slightly in front (operator/-Y side), looking steeply down at the workspace center —
 # closer to a head-mounted egocentric view than the previous near-horizontal standing-back shot.
-ARIA_HFOV_DEG = 76.0
-_CAM_POS    = Gf.Vec3d(0.90, -0.70, 2.90)   # above workspace, on the operator (-Y) side
-_CAM_TARGET = Gf.Vec3d(0.98, -0.20, 1.81)   # workspace center (between cube & bowl), at table height
+ARIA_HFOV_DEG = 90.0   # Aria hardware FOV ~110°; 90° is a reasonable sim approximation
+_CAM_POS    = Gf.Vec3d(-0.2, -0.8, 2.6)    # front-left of scene, ~35° down — matches Aria egocentric angle
+_CAM_TARGET = Gf.Vec3d(0.8, -0.15, 1.82)   # workspace center (sphere+bowl), robot arm appears upper-right
 _cam_prim = _stage.GetPrimAtPath("/World/ExternalCamera")
 if _cam_prim.IsValid():
     _xf = UsdGeom.Xformable(_cam_prim)
