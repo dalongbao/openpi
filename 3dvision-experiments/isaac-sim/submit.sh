@@ -42,6 +42,8 @@ apptainer exec --nv \
     --env "EE_FRAME=${EE_FRAME:-}" \
     --env "QUAT_WXYZ=${QUAT_WXYZ:-}" \
     --env "POSE_IN_BASE=${POSE_IN_BASE:-}" \
+    --env "SCENE_FIDELITY=${SCENE_FIDELITY:-}" \
+    --env "NUM_STEPS=${NUM_STEPS:-}" \
     --bind "$WORKSPACE":/workspace \
     --bind "$OPENPI_DIR":/workspace/openpi \
     --bind "$CHECKPOINTS":/checkpoints \

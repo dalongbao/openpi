@@ -255,6 +255,14 @@ _add_sphere_object(_stage, "/World/object", _OBJECT_POS)
 _add_bowl(_stage, "/World/bowl", _BOWL_POS)
 _make_table_wooden(_stage)
 
+# Opt-in scene realism (lights, floor, backdrop) to reduce SigLIP OOD. Off by default
+# so the validated path is unchanged; enable with SCENE_FIDELITY=1. Preview the look
+# fast (no policy) with scene_preview.py before running a full eval.
+if os.environ.get("SCENE_FIDELITY", "0").lower() in ("1", "true", "yes", "y"):
+    sys.path.insert(0, "/workspace")
+    import scene_fidelity
+    scene_fidelity.apply_fidelity(_stage)
+
 # Data is 50 Hz; step physics at 1/50 s so the policy runs at its training control rate
 # (Isaac default is 1/60, which would desync observation/action cadence from training).
 world = World(stage_units_in_meters=1.0, physics_dt=1.0 / 50.0, rendering_dt=1.0 / 50.0)
