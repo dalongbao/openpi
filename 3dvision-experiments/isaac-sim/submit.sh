@@ -1,17 +1,23 @@
 #!/bin/bash
 # SLURM flags are passed on the command line, not as #SBATCH directives (cluster quirk).
 #
-# First positional arg = which eval script to run (default eval_script_1.py).
-# It must already be copied into $WORKSPACE (/cluster/scratch/$USER/pi0_test/).
+# Args:  submit.sh <eval_script> [model_name]
+#   <eval_script>  which .py in $WORKSPACE to run (default eval_script_1.py)
+#   [model_name]   optional: sources $WORKSPACE/models/<model_name>.env, which sets
+#                  CONFIG_NAME / CHECKPOINT_DIR / NORM_STATS_DIR / PROMPT / MODEL_NAME.
+#                  This is how you pick WHICH trained model to evaluate.
 #
-# IK frame-sweep replay (this is the one to run next):
-#   sbatch --partition=gpu.4h --time=00:30:00 --mem-per-cpu=8G --cpus-per-task=8 --gpus=rtx_3090:1 3dvision-experiments/isaac-sim/submit.sh eval_replay_ik.py
+# Run the 5-episode model:
+#   sbatch --partition=gpu.4h --time=00:30:00 --mem-per-cpu=8G --cpus-per-task=8 --gpus=rtx_3090:1 submit.sh eval_script_object_in_bowl.py egoverse_5ep
 #
-# Smoke test (5 min):
-#   sbatch --partition=gpu.4h --time=00:05:00 --mem-per-cpu=8G --cpus-per-task=8 --gpus=a100:1 3dvision-experiments/isaac-sim/submit.sh
+# Run the 2537-episode oic_human model:
+#   sbatch --partition=gpu.4h --time=00:30:00 --mem-per-cpu=8G --cpus-per-task=8 --gpus=rtx_3090:1 submit.sh eval_script_object_in_bowl.py oic_human_2537ep
 #
-# Full run (2 hr):
-#   sbatch --partition=gpu.24h --time=02:00:00 --mem-per-cpu=8G --cpus-per-task=8 --gpus=a100:1 3dvision-experiments/isaac-sim/submit.sh
+# Quick smoke test of a model:
+#   sbatch --partition=gpu.4h --time=00:15:00 --mem-per-cpu=8G --cpus-per-task=8 --gpus=rtx_3090:1 submit.sh eval_script_object_in_bowl_quick.py oic_human_2537ep
+#
+# Scene preview (no policy): submit.sh scene_preview.py
+# GT replay:                 submit.sh eval_replay_ik.py
 
 export HTTP_PROXY=http://proxy.ethz.ch:3128
 export HTTPS_PROXY=http://proxy.ethz.ch:3128
@@ -25,6 +31,20 @@ WORKSPACE=/cluster/scratch/$USER/pi0_test
 CHECKPOINTS=/cluster/work/cvg/data/rytsui/checkpoints
 BASE_WEIGHTS=/cluster/work/cvg/data/Egoverse/pi05_base_jax   # for base-model variants (/base_weights)
 EVAL_SCRIPT="${1:-eval_script_1.py}"   # which script in $WORKSPACE to run
+MODEL="${2:-}"                          # optional model preset -> models/<MODEL>.env
+
+# Source the model preset so CONFIG_NAME/CHECKPOINT_DIR/NORM_STATS_DIR/PROMPT/MODEL_NAME
+# are set, then forwarded into the container below. Values are container paths (valid
+# only inside apptainer) — that's fine, they're just strings until used there.
+if [ -n "$MODEL" ]; then
+    MODEL_ENV="$WORKSPACE/models/$MODEL.env"
+    if [ -f "$MODEL_ENV" ]; then
+        echo "[submit] sourcing model preset: $MODEL_ENV"
+        set -a; . "$MODEL_ENV"; set +a
+    else
+        echo "[submit] ERROR: model preset not found: $MODEL_ENV"; exit 1
+    fi
+fi
 
 # openpi clone (for src imports) lives in scratch for some users, $HOME for others. Auto-detect.
 OPENPI_DIR="${OPENPI_DIR:-}"
@@ -33,7 +53,7 @@ if [ -z "$OPENPI_DIR" ]; then
         [ -d "$cand/src/openpi" ] && OPENPI_DIR="$cand" && break
     done
 fi
-echo "[submit] EVAL_SCRIPT=$EVAL_SCRIPT  OPENPI_DIR=$OPENPI_DIR  EE_FRAME=${EE_FRAME:-<unset>}"
+echo "[submit] EVAL_SCRIPT=$EVAL_SCRIPT  MODEL=${MODEL:-<none>}  MODEL_NAME=${MODEL_NAME:-<unset>}  CONFIG_NAME=${CONFIG_NAME:-<unset>}"
 
 mkdir -p "$ISAAC_SIM_CACHE_DIR/kit"
 mkdir -p "$ISAAC_SIM_CACHE_DIR/ov_home"
@@ -44,6 +64,12 @@ apptainer exec --nv \
     --env "POSE_IN_BASE=${POSE_IN_BASE:-}" \
     --env "SCENE_FIDELITY=${SCENE_FIDELITY:-}" \
     --env "NUM_STEPS=${NUM_STEPS:-}" \
+    --env "RUN_TAG=${RUN_TAG:-}" \
+    --env "CONFIG_NAME=${CONFIG_NAME:-}" \
+    --env "CHECKPOINT_DIR=${CHECKPOINT_DIR:-}" \
+    --env "NORM_STATS_DIR=${NORM_STATS_DIR:-}" \
+    --env "PROMPT=${PROMPT:-}" \
+    --env "MODEL_NAME=${MODEL_NAME:-}" \
     --bind "$WORKSPACE":/workspace \
     --bind "$OPENPI_DIR":/workspace/openpi \
     --bind "$CHECKPOINTS":/checkpoints \

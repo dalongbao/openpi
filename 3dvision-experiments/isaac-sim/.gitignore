@@ -1,0 +1,5 @@
+# Eval output artifacts — should live under results/<model>/, never committed.
+*.mp4
+results*.csv
+policy_cam_*.png
+preview_*.png

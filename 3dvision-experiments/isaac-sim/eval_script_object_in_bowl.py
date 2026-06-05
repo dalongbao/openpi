@@ -36,13 +36,31 @@ from omni.isaac.sensor import Camera
 # CONFIGURATION
 # --------------------------------------------------------------------
 USD_PATH       = "/workspace/kitchen_scene_1.usd"
-CHECKPOINT_DIR = "/checkpoints/pi05_egoverse/test/29999"
-RESULTS_CSV    = "/workspace/results.csv"
-VIDEO_PATH     = "/workspace/evaluation.mp4"
 
-LANGUAGE_COMMAND = "put the object in the bowl"  # must match training task label exactly
+# --- Model selection (env-overridable; presets live in models/*.env) ----------
+# Pick a model by passing its name as submit.sh's 2nd arg, which sources the matching
+# models/<name>.env. All of these are robust to an empty ("") forwarded value.
+#   CONFIG_NAME     training config             default pi05_egoverse (5-ep object_in_bowl)
+#   CHECKPOINT_DIR  orbax checkpoint dir        default the 5-ep checkpoint
+#   NORM_STATS_DIR  dir holding norm_stats.json empty -> the config's default asset dir
+#   PROMPT          language command            must match the training task label
+#   MODEL_NAME      output subfolder            -> results/<MODEL_NAME>/
+#   RUN_TAG         output filename suffix      e.g. _quick, _fidelity
+CONFIG_NAME    = os.environ.get("CONFIG_NAME") or "pi05_egoverse"
+CHECKPOINT_DIR = os.environ.get("CHECKPOINT_DIR") or "/checkpoints/pi05_egoverse/test/29999"
+NORM_STATS_DIR = os.environ.get("NORM_STATS_DIR") or ""
+LANGUAGE_COMMAND = os.environ.get("PROMPT") or "put the object in the bowl"
+MODEL_NAME     = os.environ.get("MODEL_NAME") or "default"
+RUN_TAG        = os.environ.get("RUN_TAG") or ""
 
-NUM_STEPS      = 3000   # 60 s at 50 Hz
+RESULTS_DIR    = f"/workspace/results/{MODEL_NAME}"
+os.makedirs(RESULTS_DIR, exist_ok=True)
+RESULTS_CSV    = f"{RESULTS_DIR}/results{RUN_TAG}.csv"
+VIDEO_PATH     = f"{RESULTS_DIR}/evaluation{RUN_TAG}.mp4"
+print(f"[init] model={MODEL_NAME} config={CONFIG_NAME} ckpt={CHECKPOINT_DIR}")
+print(f"[init] outputs -> {RESULTS_DIR}/  (tag='{RUN_TAG}')")
+
+NUM_STEPS      = int(os.environ.get("NUM_STEPS") or "3000")   # 60 s at 50 Hz
 NUM_ARM_JOINTS = 7
 
 POLICY_CAM_RES = (224, 224)   # pi0.5 input — ExternalCamera
@@ -73,16 +91,21 @@ try:
     from openpi.shared import normalize
     from openpi.training import config as _config
 
-    cfg       = _config.get_config("pi05_egoverse")
+    cfg       = _config.get_config(CONFIG_NAME)
     cfg       = dataclasses.replace(cfg, assets_base_dir="/workspace/openpi/assets")
     data_cfg  = cfg.data.create(cfg.assets_dirs, cfg.model)
-    norm_stats = normalize.load(cfg.assets_dirs / data_cfg.repo_id)
+    # Norm stats: prefer an explicit dir (e.g. the checkpoint's own assets), else the
+    # config's default asset dir under /workspace/openpi/assets.
+    import pathlib as _pl
+    _ns_dir = _pl.Path(NORM_STATS_DIR) if NORM_STATS_DIR else (cfg.assets_dirs / data_cfg.repo_id)
+    print(f"[init] norm stats from {_ns_dir}")
+    norm_stats = normalize.load(_ns_dir)
 
     policy = policy_config.create_trained_policy(
         cfg, CHECKPOINT_DIR, norm_stats=norm_stats,
         default_prompt=LANGUAGE_COMMAND,
     )
-    print(f"[init] Loaded pi0.5 from {CHECKPOINT_DIR}")
+    print(f"[init] Loaded {CONFIG_NAME} from {CHECKPOINT_DIR}")
 except Exception as e:
     print(f"[FATAL] Could not load policy: {e}")
     traceback.print_exc()
@@ -302,8 +325,8 @@ def get_frame(cam, expected_res):
 
 # Save the first policy-camera frame so we can verify the camera view
 _diag_frame = get_frame(external_cam, POLICY_CAM_RES)
-cv2.imwrite("/workspace/policy_cam_init.png", cv2.cvtColor(_diag_frame, cv2.COLOR_RGB2BGR))
-print(f"[init] Saved policy camera preview → /workspace/policy_cam_init.png")
+cv2.imwrite(f"{RESULTS_DIR}/policy_cam_init.png", cv2.cvtColor(_diag_frame, cv2.COLOR_RGB2BGR))
+print(f"[init] Saved policy camera preview → {RESULTS_DIR}/policy_cam_init.png")
 
 
 
@@ -434,7 +457,7 @@ try:
             for _ci in range(min(3, len(last_action_chunk))):
                 _a = last_action_chunk[_ci]
                 print(f"  chunk[{_ci}] EE-pose={np.round(_a[:7], 3)}")
-            cv2.imwrite("/workspace/policy_cam_step0.png",
+            cv2.imwrite(f"{RESULTS_DIR}/policy_cam_step0.png",
                         cv2.cvtColor(policy_img, cv2.COLOR_RGB2BGR))
         if step % 500 == 0 and step > 0:
             print(f"[diag] step {step} action EE-pose={np.round(action[:7], 3)}")

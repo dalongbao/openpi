@@ -1,63 +1,29 @@
 """
-eval_script_object_in_bowl_quick.py — fast smoke-test wrapper around
-eval_script_object_in_bowl.py.
+eval_script_object_in_bowl_quick.py — fast smoke test for the object_in_bowl policy eval.
 
-WHY: a full 3000-step eval is ~12-20 min, most of it the closed-loop run. When you
-just want to see whether the arm heads in the RIGHT DIRECTION after a scene/camera
-tweak, you don't need 60 s of sim. This runs the exact same eval with a much shorter
-episode and separate output files, so it never clobbers the real run's artifacts.
+A full 3000-step eval is ~12-20 min. When you just want to see whether the arm heads
+in the RIGHT DIRECTION after a scene/camera/model change, a short episode is enough.
 
-It does NOT duplicate the eval logic — it reads the real script's source, patches a
-couple of constants in memory, and execs it. So any fix to eval_script_object_in_bowl.py
-(camera, scene, observation) is automatically picked up here too.
+This sets short-run defaults (NUM_STEPS=400, RUN_TAG=_quick) and then runs the real
+eval_script_object_in_bowl.py — single source of truth, so every fix to the real eval
+is picked up automatically and outputs never clobber the full run (they land in
+results/<MODEL_NAME>/evaluation_quick.mp4 / results_quick.csv).
 
-Tunables via env:
-  NUM_STEPS   number of closed-loop steps (default 400 ≈ 8 s of sim)
-
-Outputs (separate from the full run):
-  /workspace/evaluation_quick.mp4
-  /workspace/results_quick.csv
-
-Submit exactly like the full one, just point submit.sh at this file:
-  sbatch ... submit.sh eval_script_object_in_bowl_quick.py
-  NUM_STEPS=200 sbatch ... submit.sh eval_script_object_in_bowl_quick.py
+Submit it like the full eval (model name as the 2nd arg picks the checkpoint):
+  sbatch ... submit.sh eval_script_object_in_bowl_quick.py oic_human_2537ep
+  NUM_STEPS=200 sbatch ... submit.sh eval_script_object_in_bowl_quick.py egoverse_5ep
 """
 import os
 import pathlib
 
-# The real script sits next to this one in the workspace.
-_REAL = pathlib.Path("/workspace/eval_script_object_in_bowl.py")
-_src = _REAL.read_text()
+# Defaults only — don't override values the submitter explicitly set (and treat an
+# empty forwarded value as "unset", since submit.sh forwards "" when a var is absent).
+if not os.environ.get("NUM_STEPS"):
+    os.environ["NUM_STEPS"] = "400"
+if not os.environ.get("RUN_TAG"):
+    os.environ["RUN_TAG"] = "_quick"
 
-_quick_steps = os.environ.get("NUM_STEPS", "400")
+print(f"[quick] NUM_STEPS={os.environ['NUM_STEPS']} RUN_TAG={os.environ['RUN_TAG']}")
 
-# Patch step count + redirect outputs. Each replacement must hit exactly once;
-# assert so we fail loudly if the real script's lines change (rather than silently
-# running the full 3000-step version or overwriting the real artifacts).
-_patches = [
-    ("NUM_STEPS      = int(os.environ.get(\"NUM_STEPS\", \"3000\"))",
-     f"NUM_STEPS      = {int(_quick_steps)}"),
-    ("NUM_STEPS      = 3000",                       # fallback if env-var form not present yet
-     f"NUM_STEPS      = {int(_quick_steps)}"),
-    ('RESULTS_CSV    = "/workspace/results.csv"',
-     'RESULTS_CSV    = "/workspace/results_quick.csv"'),
-    ('VIDEO_PATH     = "/workspace/evaluation.mp4"',
-     'VIDEO_PATH     = "/workspace/evaluation_quick.mp4"'),
-]
-
-_applied = 0
-for _old, _new in _patches:
-    if _old in _src:
-        _src = _src.replace(_old, _new, 1)
-        _applied += 1
-
-# We must have patched the outputs (2) and at least one NUM_STEPS form (1) -> >=3.
-if _applied < 3:
-    raise RuntimeError(
-        f"quick wrapper patched only {_applied} constants — the real script's lines "
-        f"changed. Update _patches in eval_script_object_in_bowl_quick.py."
-    )
-
-print(f"[quick] Running eval with NUM_STEPS={_quick_steps}, "
-      f"outputs -> evaluation_quick.mp4 / results_quick.csv")
-exec(compile(_src, str(_REAL), "exec"), {"__name__": "__main__"})
+_real = pathlib.Path("/workspace/eval_script_object_in_bowl.py")
+exec(compile(_real.read_text(), str(_real), "exec"), {"__name__": "__main__"})

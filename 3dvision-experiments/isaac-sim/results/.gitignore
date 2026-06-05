@@ -1,0 +1,3 @@
+# Eval outputs (videos, csvs, preview pngs) — per-model subfolders, never committed.
+*
+!.gitignore
