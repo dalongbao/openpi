@@ -22,6 +22,7 @@ from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": True, "livestream": 0, "width": 1280, "height": 720})
 
 import math
+import os
 import sys
 import numpy as np
 import cv2
@@ -116,6 +117,11 @@ if cp.IsValid():
     c = UsdGeom.Camera(cp); ha = 36.0
     c.CreateHorizontalApertureAttr(ha); c.CreateVerticalApertureAttr(ha)
     c.CreateFocalLengthAttr(ha / (2 * math.tan(math.radians(CAM_HFOV) / 2)))
+
+# Optional egocentric view (override the camera + hide the arm) to match the Aria training view.
+if os.environ.get("EGOCENTRIC", "0").lower() in ("1", "true", "yes", "y"):
+    import ego_view
+    ego_view.apply_egocentric(stage, hide_arm=os.environ.get("EGO_HIDE_ARM", "0").lower() in ("1", "true", "yes", "y"))
 
 world = World(stage_units_in_meters=1.0, physics_dt=1.0 / 50.0, rendering_dt=1.0 / 50.0)
 world.reset()

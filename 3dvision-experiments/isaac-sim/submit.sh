@@ -65,6 +65,8 @@ apptainer exec --nv \
     --env "SCENE_FIDELITY=${SCENE_FIDELITY:-}" \
     --env "NUM_STEPS=${NUM_STEPS:-}" \
     --env "EULER_ORDER=${EULER_ORDER:-}" \
+    --env "EGOCENTRIC=${EGOCENTRIC:-}" \
+    --env "EGO_HIDE_ARM=${EGO_HIDE_ARM:-}" \
     --env "RUN_TAG=${RUN_TAG:-}" \
     --env "CONFIG_NAME=${CONFIG_NAME:-}" \
     --env "CHECKPOINT_DIR=${CHECKPOINT_DIR:-}" \

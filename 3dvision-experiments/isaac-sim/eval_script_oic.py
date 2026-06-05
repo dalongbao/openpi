@@ -190,6 +190,11 @@ if _cp.IsValid():
     _c.CreateHorizontalApertureAttr(_ha); _c.CreateVerticalApertureAttr(_ha)
     _c.CreateFocalLengthAttr(_ha / (2 * math.tan(math.radians(90.0) / 2)))
 
+# Optional egocentric view (override camera + hide arm) to match the Aria training view.
+if os.environ.get("EGOCENTRIC", "0").lower() in ("1", "true", "yes", "y"):
+    import ego_view
+    ego_view.apply_egocentric(_stage, hide_arm=os.environ.get("EGO_HIDE_ARM", "0").lower() in ("1", "true", "yes", "y"))
+
 world = World(stage_units_in_meters=1.0, physics_dt=1.0 / 50.0, rendering_dt=1.0 / 50.0)
 world.reset()
 franka = Articulation(prim_path="/World/fr3", name="franka"); franka.initialize()
