@@ -7,9 +7,11 @@ sources the file and forwards the values into the container.
 
 | Preset | Config | Episodes | Notes |
 |--------|--------|----------|-------|
-| `egoverse_5ep` | `pi05_egoverse` | 5 | Original object_in_bowl finetune. Weak (real-frame cosine ~0.385). |
-| `oic_human_2537ep` | `pi05_ego_human_oic` | 2537 | Object-in-container, human (Aria) data. Much better object localization; human-hand actions don't map cleanly to the FR3 gripper — judge arm reaching, not grasping. |
+| `egoverse_5ep` | `pi05_egoverse` | 5 | Original object_in_bowl finetune. 24-dim (arm+hand). Weak (real-frame cosine ~0.385). Run with `eval_script_object_in_bowl.py`. |
+| `oic_human_2537ep` | `pi05_ego_human_oic` | 2537 | Object-in-container, human (Aria) data. **6-dim single-arm cartesian (no hand)** → run with the dedicated `eval_script_oic.py`. Euler order/frame unresolved; the script sweeps `EULER_ORDER` at startup. |
 | `base` | `pi05_egoverse` | 0 | Untrained pi0.5. Use the dedicated `eval_script_base_object_in_bowl.py`. |
+
+**Each model has a matching eval script** — the action space differs (24-dim arm+hand vs 6-dim cartesian), so the script must match the preset.
 
 ## Run a model
 
