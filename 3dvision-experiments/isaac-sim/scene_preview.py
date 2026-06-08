@@ -42,10 +42,10 @@ HD_RES     = (1280, 720)
 
 # Same object/bowl positions + camera as eval_script_object_in_bowl.py so the preview
 # matches what the policy will actually see. Keep these in sync if the eval changes.
-# Preview-only placement: bowl near the camera look-target with the ball sitting in it,
-# so both read large/centred like the real Aria frame (the eval uses its own positions).
-OBJECT_POS = (0.85, -0.13, 1.86)
-BOWL_POS   = (0.85, -0.15, 1.807)
+# Preview-only placement: bowl on the table, ball OUTSIDE it on the table (the episode's
+# initial state — robot then places it in the bowl). The eval uses its own positions.
+OBJECT_POS = (0.78, -0.48, 1.862)   # ball resting on the tabletop, in front of the bowl
+BOWL_POS   = (0.88, -0.10, 1.807)
 CAM_POS    = Gf.Vec3d(-0.2, -0.8, 2.6)
 CAM_TARGET = Gf.Vec3d(0.8, -0.15, 1.82)
 CAM_HFOV   = 90.0

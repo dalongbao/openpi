@@ -31,8 +31,8 @@ ROOM_HALF      = 4.0                   # floor extends +/- this (m) around the w
 WALL_DIST      = 2.5                   # walls this far from centre (floor shows between table and wall)
 WALL_HEIGHT    = 3.0
 # Plywood tabletop: a long, narrow rectangle sitting on the floor (matches the real sheet).
-TABLE_HALF_X   = 0.75                  # half-WIDTH  (left-right, narrow)
-TABLE_HALF_Y   = 1.50                  # half-LENGTH (depth, long)
+TABLE_HALF_X   = 1.50                  # half-LENGTH (left-right; long side horizontal in frame)
+TABLE_HALF_Y   = 0.75                  # half-WIDTH  (depth, short)
 FLOOR_DROP     = 0.30                  # room floor this far below the tabletop
 FLOOR_RGB      = (0.224, 0.204, 0.267) # dark purplish floor, RGB(57,52,68)
 WALL_RGB       = (0.149, 0.318, 0.412) # greenish-gray wall, RGB(38,81,105)
