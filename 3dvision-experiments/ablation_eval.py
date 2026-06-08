@@ -39,6 +39,25 @@ from openpi.training import config as _config
 ARM_DIM = 7        # EE pose [x,y,z, qx,qy,qz,qw]
 POS_DIM = 3        # [x,y,z] — direction metric uses this (rep/frame-agnostic)
 ACTION_DIM = 24    # 7 arm + 17 hand
+SUCCESS_THRESH = 0.08   # m; "reached" the object/bowl region (gripper-scale tolerance)
+
+
+def detect_grasp_release(f, total):
+    """From GT, find the object & bowl positions (task-space subgoals), path-invariant.
+    object = EE position when the hand first closes; bowl = where it first re-opens.
+    Returns (object_pos(3), bowl_pos(3), grasp_frame, release_frame)."""
+    arm_pos = f["actions_arm"][:, :POS_DIM]
+    hsig = f["actions_hand"][:].mean(axis=1)
+    lo, hi = np.percentile(hsig, 5), np.percentile(hsig, 95)
+    closed = np.clip((hsig - lo) / (hi - lo + 1e-9), 0, 1) > 0.5
+    if closed.any() and (~closed).any():
+        g = int(np.argmax(closed))
+        after = closed[g:]
+        r = g + (int(np.argmin(after)) if (~after).any() else len(after) - 1)
+    else:                                   # flat hand signal -> geometry fallback
+        g = int(np.argmin(arm_pos[:, 2]))   # lowest EE = at the object on the table
+        r = total - 1
+    return arm_pos[g], arm_pos[r], g, r
 
 
 def load_frame(f, idx):
@@ -74,21 +93,38 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt):
             cos_dir=float(np.nanmean(np.sum(pd * gd, 1)[mv] / (pmag[mv] * gmag[mv] + 1e-9))),
         )
 
-        # --- receding-horizon open-loop rollout (free-run arm state, teacher-force images) ---
+        # --- receding-horizon open-loop rollout (free-run state, teacher-force images) ---
         cur = (np.concatenate([f["observations/qpos_arm"][0], f["observations/qpos_hand"][0]])).astype(np.float32)
-        gt_pos, roll_pos = [], []
+        gt_pos, roll_pos, roll_grip = [], [], []
         t = 0
         while t < total - 1:
             img, _ = load_frame(f, t)
             pred = np.asarray(policy.infer(
                 {"observation/image": img, "observation/state": cur, "prompt": prompt})["actions"])
             k = min(chunk_len, total - 1 - t)
-            cur = pred[k - 1].astype(np.float32)           # advance to end of executed chunk (absolute EE pose)
-            roll_pos.append(cur[:POS_DIM]); gt_pos.append(f["actions_arm"][min(t + k, total - 1)][:POS_DIM])
+            cur = pred[k - 1].astype(np.float32)           # advance to end of chunk (absolute EE pose)
+            roll_pos.append(cur[:POS_DIM]); roll_grip.append(float(cur[ARM_DIM:].mean()))
+            gt_pos.append(f["actions_arm"][min(t + k, total - 1)][:POS_DIM])
             t += k
-        roll_pos = np.stack(roll_pos); gt_pos = np.stack(gt_pos)
+        roll_pos = np.stack(roll_pos); gt_pos = np.stack(gt_pos); roll_grip = np.asarray(roll_grip)
         out["rollout_endpoint_err"] = float(np.linalg.norm(roll_pos[-1] - gt_pos[-1]))
         out["rollout_rmse"] = float(np.sqrt(((roll_pos - gt_pos) ** 2).sum(1).mean()))
+
+        # --- TASK-SPACE SUBGOAL metrics (path-invariant: route doesn't matter, reaching does) ---
+        obj_pos, bowl_pos, _, _ = detect_grasp_release(f, total)
+        d_obj = np.linalg.norm(roll_pos - obj_pos, axis=1)
+        d_bowl = np.linalg.norm(roll_pos - bowl_pos, axis=1)
+        i_obj, i_bowl = int(d_obj.argmin()), int(d_bowl.argmin())
+        reached_obj = d_obj.min() < SUCCESS_THRESH
+        reached_bowl = d_bowl.min() < SUCCESS_THRESH
+        out["reach_object_err"] = float(d_obj.min())          # closest the hand got to the object (m)
+        out["reach_bowl_err"] = float(d_bowl.min())           # ... to the bowl (m)
+        out["reached_object"] = float(reached_obj)
+        out["reached_bowl"] = float(reached_bowl)
+        # ordered success: reach object, THEN bowl (object-before-bowl in the rollout)
+        out["ordered_success"] = float(reached_obj and reached_bowl and i_bowl >= i_obj)
+        # gripper pattern: more closed at the object than at the bowl (grasp-then-release)
+        out["gripper_ok"] = float(roll_grip[i_obj] > roll_grip[i_bowl])
     return out
 
 
@@ -130,14 +166,16 @@ def main(
             m = eval_episode(policy, ep, frame_stride, chunk_len, prompt)
             m["episode"] = ep.name
             per_ep.append(m)
-            print(f"  {ep.name}: cos={m['cos_dir']:.3f} mag={m['mag_ratio']:.2f} "
-                  f"arm_mse={m['arm_mse']:.4f}(const {m['arm_mse_const']:.4f}) "
-                  f"rollout_end={m['rollout_endpoint_err']:.3f}m")
+            print(f"  {ep.name}: cos={m['cos_dir']:.3f} "
+                  f"reach_obj={m['reach_object_err']:.3f}m reach_bowl={m['reach_bowl_err']:.3f}m "
+                  f"success={int(m['ordered_success'])} grip_ok={int(m['gripper_ok'])}")
         except Exception as e:
             print(f"  {ep.name}: SKIP ({e})")
 
-    keys = ["cos_dir", "mag_ratio", "arm_mse", "hand_mse", "pos_mse",
-            "arm_mse_zero", "arm_mse_const", "rollout_endpoint_err", "rollout_rmse"]
+    # Subgoal (task-space, path-invariant) metrics lead; pose-match metrics are secondary.
+    keys = ["ordered_success", "reached_object", "reached_bowl", "reach_object_err", "reach_bowl_err",
+            "gripper_ok", "cos_dir", "mag_ratio", "arm_mse", "arm_mse_const",
+            "rollout_endpoint_err", "rollout_rmse", "pos_mse", "hand_mse", "arm_mse_zero"]
     summary = {k: float(np.mean([m[k] for m in per_ep])) for k in keys}
     summary["n_episodes"] = len(per_ep)
     print(f"\n[{condition}] SUMMARY: " + "  ".join(f"{k}={summary[k]:.4f}" for k in keys))
