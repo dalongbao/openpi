@@ -19,7 +19,7 @@ import pathlib
 # Defaults only — don't override values the submitter explicitly set (and treat an
 # empty forwarded value as "unset", since submit.sh forwards "" when a var is absent).
 if not os.environ.get("NUM_STEPS"):
-    os.environ["NUM_STEPS"] = "400"
+    os.environ["NUM_STEPS"] = "250"          # 5 s at 50 Hz — enough to see the first reach
 if not os.environ.get("RUN_TAG"):
     os.environ["RUN_TAG"] = "_quick"
 
