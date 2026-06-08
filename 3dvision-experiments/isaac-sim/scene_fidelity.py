@@ -23,7 +23,7 @@ from pxr import UsdGeom, UsdLux, UsdShade, Gf, Sdf
 TABLE_TOP_Z    = 1.807
 TEX_DIR        = "/workspace"          # where generated texture PNGs are written
 WOOD_TILES     = 2.5                   # larger plywood grain (was 6 -> too busy/orange)
-BACKDROP_TILES = 2.0                   # wall+floor backdrop texture repeats
+BACKDROP_TILES = 1.0                   # backdrop maps ONCE (solid bands; must not repeat)
 DOME_INTENSITY = 800.0                # neutral daylight; lower so the plywood isn't washed white
 KEY_INTENSITY  = 1000.0
 KEY_ROT_XYZ    = (-50.0, 0.0, -35.0)
@@ -48,24 +48,13 @@ def _wood_png(path, w=512, h=512, seed=0):
     cv2.imwrite(path, (rgb[:, :, ::-1] * 255).astype(np.uint8))  # RGB -> BGR
 
 
-def _backdrop_png(path, w=512, h=512, seed=1):
-    """Background: muted teal WALL on top, dark reddish floor-TILE band on the bottom.
-    On a vertical wall quad this reads top->down as wall, tile floor, then the table —
-    matching the real frame's layered background."""
-    rng = np.random.default_rng(seed)
+def _backdrop_png(path, w=512, h=512):
+    """Two flat bands (no tiling): greenish-gray WALL on top, single dark-reddish FLOOR below.
+    On the vertical backdrop quad V=0 (bottom) is floor, V=1 (top) is wall."""
     img = np.empty((h, w, 3), np.uint8)
-    img[:, :] = (102, 80, 38)                       # teal wall  BGR of RGB(38,80,102)
-    floor_top = int(h * 0.30)                        # mostly tile floor; thin wall strip on top
-    img[floor_top:, :] = (62, 50, 56)               # dark grout BGR of RGB(56,50,62)
-    bw, bh, m = 24, 15, 2
-    for r0 in range(floor_top, h, bh):
-        off = (bw // 2) if ((r0 // bh) % 2) else 0
-        for c0 in range(-bw, w, bw):
-            x0, x1 = c0 + off + m, c0 + off + bw - m
-            y0, y1 = r0 + m, r0 + bh - m
-            col = (int(55 + rng.integers(0, 20)), int(20 + rng.integers(0, 18)),
-                   int(95 + rng.integers(0, 40)))   # BGR -> reddish-maroon tile
-            cv2.rectangle(img, (x0, y0), (x1, y1), col, -1)
+    img[:, :] = (105, 81, 38)                       # wall  greenish-gray  BGR of RGB(38,81,105)
+    floor_top = int(h * 0.35)                        # top 35% wall, bottom 65% floor
+    img[floor_top:, :] = (60, 21, 112)              # floor dark reddish   BGR of RGB(112,21,60)
     cv2.imwrite(path, img)
 
 

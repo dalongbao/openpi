@@ -16,8 +16,10 @@ from pxr import UsdGeom, Gf
 
 # Head-height, operator (-Y) side, looking down-forward across the table at the objects,
 # so the gripper enters the lower frame like a hand in an egocentric view.
-EGO_CAM_POS    = (0.45, -0.90, 2.25)
-EGO_CAM_TARGET = (0.95, -0.10, 1.81)
+# Above the table on the operator (-Y) side, tilted ~45 deg forward so the table fills the
+# near field and the floor + wall show beyond it. Level horizon comes from the look-at.
+EGO_CAM_POS    = (0.80, -0.75, 2.45)
+EGO_CAM_TARGET = (0.85,  0.15, 1.65)   # ~42 deg below horizontal, looking +Y across the table
 EGO_HFOV_DEG   = 95.0          # Aria is wide (~110 hardware); 95 is a reasonable sim value
 
 # Arm-hiding: drop the bulky base/shoulder/elbow links; keep wrist + hand + fingers so a
