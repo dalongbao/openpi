@@ -64,8 +64,8 @@ def render_ansi(img: np.ndarray, width: int = 72):
     Needs a 24-bit-color terminal (the VSCode integrated terminal qualifies)."""
     im = Image.fromarray(img).convert("RGB")
     w0, h0 = im.size
-    rows = max(2, int(round(width * h0 / w0 * 0.5)) * 1)
-    im = im.resize((width, rows * 2))
+    rows = max(2, int(round(width * h0 / w0 * 0.5)))
+    im = im.resize((width, rows * 2), Image.LANCZOS)    # sharp downscale
     a = np.asarray(im)
     lines = []
     for r in range(rows):
@@ -91,9 +91,10 @@ def show_in_terminal(png: Path) -> bool:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default=DATA_DIR)
-    ap.add_argument("--out", default=str(Path.home() / "object_labels.csv"), help="sidecar CSV of labels")
+    ap.add_argument("--out", default="3dvision-experiments/object_labels.csv",
+                    help="sidecar CSV of labels (its folder also holds the full-res _view.png)")
     ap.add_argument("--frame", choices=["first", "middle", "last"], default="middle")
-    ap.add_argument("--width", type=int, default=72, help="terminal render width in chars (0 = off, use PNG only)")
+    ap.add_argument("--width", type=int, default=100, help="terminal render width in chars (0 = off, use PNG only)")
     ap.add_argument("--relabel", action="store_true", help="start from the top and revisit labeled episodes")
     args = ap.parse_args()
 
@@ -106,7 +107,7 @@ def main():
         print(f"No .h5 in {args.data_dir}")
         return
     print(f"{len(eps)} episodes | {len(labels)} already labeled | saving -> {out}")
-    print(f"Keep this open in VSCode preview: {view}")
+    print(f"FULL-RES image (open in VSCode, it refreshes each step): {view}")
     print("Prompt: <text>=label, [enter]=skip, b=back, q=quit & save\n")
 
     i = 0

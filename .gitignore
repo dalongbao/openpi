@@ -169,3 +169,7 @@ cython_debug/
 NOTES.md
 *.DS_Store
 */.DS_Store
+
+# label_objects scratch (per-user, not shared)
+3dvision-experiments/_view.png
+3dvision-experiments/object_labels.csv
