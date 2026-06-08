@@ -52,9 +52,9 @@ def _backdrop_png(path, w=512, h=512):
     """Two flat bands (no tiling): greenish-gray WALL on top, single dark-reddish FLOOR below.
     On the vertical backdrop quad V=0 (bottom) is floor, V=1 (top) is wall."""
     img = np.empty((h, w, 3), np.uint8)
-    img[:, :] = (105, 81, 38)                       # wall  greenish-gray  BGR of RGB(38,81,105)
+    img[:, :] = (105, 81, 38)                       # wall  greenish-gray   BGR of RGB(38,81,105)
     floor_top = int(h * 0.35)                        # top 35% wall, bottom 65% floor
-    img[floor_top:, :] = (60, 21, 112)              # floor dark reddish   BGR of RGB(112,21,60)
+    img[floor_top:, :] = (68, 52, 57)               # floor dark purplish   BGR of RGB(57,52,68)
     cv2.imwrite(path, img)
 
 

@@ -100,7 +100,7 @@ def add_bowl(path, pos, Rb=0.10, Rt=0.18, H=0.13, wall=0.025, n=32):
     m.CreatePointsAttr(pts); m.CreateFaceVertexCountsAttr(counts); m.CreateFaceVertexIndicesAttr(idx)
     m.CreateSubdivisionSchemeAttr("none"); m.CreateDoubleSidedAttr(True)
     UsdGeom.Xformable(m).AddTranslateOp().Set(Gf.Vec3d(*pos))
-    m.CreateDisplayColorAttr([Gf.Vec3f(0.25, 0.23, 0.43)])   # dark unsaturated purple (real bowl)
+    m.CreateDisplayColorAttr([Gf.Vec3f(0.227, 0.192, 0.396)])   # dark dusty purple, RGB(58,49,101)
 
 
 add_sphere("/World/object", OBJECT_POS)
