@@ -52,7 +52,7 @@ def _parse_pos_map(s):
 class OicKinematics:
     """6-dim [pos, euler] convention over the shared Franka Lula solver."""
 
-    def __init__(self, ee_frame="panda_hand", euler_order="XYZ", pos_map="x,y,z"):
+    def __init__(self, ee_frame="panda_hand", euler_order="XYZ", pos_map="x,y,z", transform=None):
         # Drive the underlying solver in wxyz so we control the quat<->euler step here.
         self.kin = ik_fk_helpers.FrankaKinematics(ee_frame=ee_frame, quat_wxyz=True)
         self.euler_order = euler_order
@@ -60,21 +60,40 @@ class OicKinematics:
         self.solver = self.kin.solver
         self.frames = self.kin.frames
         self.perm, self.sign = _parse_pos_map(pos_map)
-        print(f"[oic-kin] euler_order={euler_order}  ee_frame={self.ee_frame}  pos_map={pos_map}")
+        # Optional full rigid transform (R,t,s) mapping MODEL frame -> BASE frame:
+        #   base = s*R@model + t  (overrides pos_map; calibrated by oic_frame_calib).
+        self.T = None
+        if transform is not None:
+            R, t, s = transform
+            self.T = (np.asarray(R, np.float64), np.asarray(t, np.float64), float(s))
+        print(f"[oic-kin] euler_order={euler_order}  ee_frame={self.ee_frame}  "
+              f"pos_map={pos_map}  transform={'set' if self.T is not None else 'none'}")
 
     def fk6(self, arm_joints):
         """7 arm joints -> [x,y,z, e1,e2,e3] in the MODEL frame (euler in self.euler_order)."""
         pose7 = self.kin.fk(arm_joints)                 # [base_pos, wxyz]
         base_pos = np.asarray(pose7[:3], dtype=np.float64)
-        model_pos = self.sign * base_pos[self.perm]     # base -> model
-        euler = _R.from_quat(_wxyz_to_xyzw(pose7[3:7])).as_euler(self.euler_order)
-        return np.concatenate([model_pos, euler])
+        base_rot = _R.from_quat(_wxyz_to_xyzw(pose7[3:7]))
+        if self.T is not None:                          # base -> model (inverse of the transform)
+            R, t, s = self.T
+            model_pos = (R.T @ (base_pos - t)) / s
+            model_rot = _R.from_matrix(R.T @ base_rot.as_matrix())
+        else:                                           # simple signed-axis remap
+            model_pos = self.sign * base_pos[self.perm]
+            model_rot = base_rot
+        return np.concatenate([model_pos, model_rot.as_euler(self.euler_order)])
 
     def ik6(self, pose6, warm=None):
         """[x,y,z, e1,e2,e3] in the MODEL frame -> (7 arm joints, success)."""
         model_pos = np.asarray(pose6[:3], dtype=np.float64)
-        base_pos = np.empty(3, dtype=np.float64)
-        base_pos[self.perm] = model_pos * self.sign     # invert: model -> base
-        euler = np.asarray(pose6[3:6], dtype=np.float64)
-        quat_wxyz = _xyzw_to_wxyz(_R.from_euler(self.euler_order, euler).as_quat())
+        model_rot = _R.from_euler(self.euler_order, np.asarray(pose6[3:6], dtype=np.float64))
+        if self.T is not None:                          # model -> base
+            R, t, s = self.T
+            base_pos = s * (R @ model_pos) + t
+            base_rot = _R.from_matrix(R @ model_rot.as_matrix())
+        else:
+            base_pos = np.empty(3, dtype=np.float64)
+            base_pos[self.perm] = model_pos * self.sign
+            base_rot = model_rot
+        quat_wxyz = _xyzw_to_wxyz(base_rot.as_quat())
         return self.kin.ik(np.concatenate([base_pos, quat_wxyz]), warm)

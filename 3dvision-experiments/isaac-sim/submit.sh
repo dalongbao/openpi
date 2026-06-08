@@ -66,6 +66,8 @@ apptainer exec --nv \
     --env "NUM_STEPS=${NUM_STEPS:-}" \
     --env "EULER_ORDER=${EULER_ORDER:-}" \
     --env "OIC_POS_MAP=${OIC_POS_MAP:-}" \
+    --env "OIC_CALIBRATE=${OIC_CALIBRATE:-}" \
+    --env "OIC_ANCHOR_FRAMES=${OIC_ANCHOR_FRAMES:-}" \
     --env "EGOCENTRIC=${EGOCENTRIC:-}" \
     --env "EGO_HIDE_ARM=${EGO_HIDE_ARM:-}" \
     --env "RUN_TAG=${RUN_TAG:-}" \

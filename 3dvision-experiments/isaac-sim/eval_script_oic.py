@@ -185,6 +185,32 @@ import oic_kinematics
 POS_MAP = os.environ.get("OIC_POS_MAP") or "x,y,z"   # base->model position remap to sweep the frame
 kin = oic_kinematics.OicKinematics(ee_frame=EE_FRAME, euler_order=EULER_ORDER, pos_map=POS_MAP)
 
+# Optional frame calibration: solve the rigid transform (R,t,s) mapping the model's egocentric
+# EE frame to the Franka base frame by anchoring demo start/grasp/release to the sim
+# home/ball/bowl, then rebuild `kin` with it so the robot reaches the ACTUAL objects.
+if os.environ.get("OIC_CALIBRATE", "0").lower() in ("1", "true", "yes", "y"):
+    import oic_frame_calib, scene_build
+    from pxr import UsdGeom as _UG, Gf as _Gf
+    _demo_pos = np.asarray(np.load("/workspace/oic_demo.npz")["actions6"], np.float64)[:, :3]
+    _w2b = _UG.XformCache().GetLocalToWorldTransform(_stage.GetPrimAtPath("/World/fr3")).GetInverse()
+
+    def _w2b_pt(p):
+        v = _w2b.Transform(_Gf.Vec3d(float(p[0]), float(p[1]), float(p[2])))
+        return np.array([v[0], v[1], v[2]], np.float64)
+
+    _ready = np.array([0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785])   # Franka ready pose
+    _home_base = np.asarray(kin.kin.fk(_ready)[:3], np.float64)
+    _ball_base = _w2b_pt(scene_build.OBJECT_POS)
+    _bowl_base = _w2b_pt(scene_build.BOWL_POS)
+    _Rt, _tt, _st, _fr, _res = oic_frame_calib.build_transform(
+        _demo_pos, (_home_base, _ball_base, _bowl_base),
+        anchor_frames=os.environ.get("OIC_ANCHOR_FRAMES") or None)
+    print(f"[calib] frames(start,grasp,release)={_fr} scale={_st:.3f} resid_m={np.round(_res, 3).tolist()}")
+    print(f"[calib] home_base={np.round(_home_base, 3).tolist()} ball_base={np.round(_ball_base, 3).tolist()} "
+          f"bowl_base={np.round(_bowl_base, 3).tolist()}")
+    kin = oic_kinematics.OicKinematics(ee_frame=EE_FRAME, euler_order=EULER_ORDER,
+                                       pos_map=POS_MAP, transform=(_Rt, _tt, _st))
+
 # Sweep: IK the action-mean pose under several euler orders. The right one is reachable
 # AND yields a sensible (non-extreme) posture. If ALL fail, the position frame is wrong.
 print(f"[sweep] IK of oic action-mean pose {np.round(OIC_MEAN_POSE6, 3)} under euler orders:")
