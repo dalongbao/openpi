@@ -120,6 +120,10 @@ if _cp.IsValid():
     _c.CreateHorizontalApertureAttr(_ha); _c.CreateVerticalApertureAttr(_ha)
     _c.CreateFocalLengthAttr(_ha / (2 * math.tan(math.radians(90.0) / 2)))
 
+# Re-aim the HD RecordingCamera at the workspace (its USD pose otherwise stares at empty sky).
+import ego_view
+ego_view.place_recording_camera(_stage)
+
 # data is 30 Hz
 world = World(stage_units_in_meters=1.0, physics_dt=1.0 / 30.0, rendering_dt=1.0 / 30.0)
 world.reset()
