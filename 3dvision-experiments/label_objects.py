@@ -5,11 +5,11 @@ For each episode it shows one frame and asks you to type the object name in the 
 Saves incrementally to a CSV (filename,object) after every entry, so you can quit and resume
 anytime. Does NOT modify the raw h5 files — labels live in a separate sidecar CSV.
 
-How you SEE the image (either works):
-  - It writes the current frame to <out_dir>/_view.png. Keep that file open in VSCode
-    Remote-SSH preview — it refreshes as you advance.
-  - If `chafa`, `timg`, or `catimg` is installed, it ALSO renders the frame inline in the
-    terminal (no extra setup; skipped if none are present).
+How you SEE the image:
+  - DEFAULT: it draws the frame straight into the terminal with truecolor half-block chars
+    (no install, works in the VSCode integrated terminal). Tune with --width (chars), 0=off.
+  - It also writes <out_dir>/_view.png as a backup you can open in VSCode preview. With
+    --width 0 it instead tries an external viewer (chafa/timg/catimg) if present.
 
 Usage (cluster, 3dv venv — has h5py/numpy/pillow):
   source ~/venvs/3dv/bin/activate
@@ -58,8 +58,26 @@ def get_frame(h5_path: Path, choice: str) -> np.ndarray:
         return np.asarray(ds[i])
 
 
+def render_ansi(img: np.ndarray, width: int = 72):
+    """Print the image straight into the terminal using truecolor half-block chars (no deps,
+    no external viewer). Each cell = 2 vertically-stacked pixels: fg=top, bg=bottom via '▀'.
+    Needs a 24-bit-color terminal (the VSCode integrated terminal qualifies)."""
+    im = Image.fromarray(img).convert("RGB")
+    w0, h0 = im.size
+    rows = max(2, int(round(width * h0 / w0 * 0.5)) * 1)
+    im = im.resize((width, rows * 2))
+    a = np.asarray(im)
+    lines = []
+    for r in range(rows):
+        top, bot = a[2 * r], a[2 * r + 1]
+        cells = [f"\x1b[38;2;{top[c][0]};{top[c][1]};{top[c][2]}m"
+                 f"\x1b[48;2;{bot[c][0]};{bot[c][1]};{bot[c][2]}m▀" for c in range(width)]
+        lines.append("".join(cells) + "\x1b[0m")
+    print("\n".join(lines))
+
+
 def show_in_terminal(png: Path) -> bool:
-    """Render inline if a terminal image viewer exists; otherwise no-op (rely on the PNG)."""
+    """Prefer an external viewer if present; otherwise no-op (render_ansi already drew it)."""
     for tool in ("chafa", "timg", "catimg"):
         if shutil.which(tool):
             try:
@@ -75,6 +93,7 @@ def main():
     ap.add_argument("--data-dir", default=DATA_DIR)
     ap.add_argument("--out", default=str(Path.home() / "object_labels.csv"), help="sidecar CSV of labels")
     ap.add_argument("--frame", choices=["first", "middle", "last"], default="middle")
+    ap.add_argument("--width", type=int, default=72, help="terminal render width in chars (0 = off, use PNG only)")
     ap.add_argument("--relabel", action="store_true", help="start from the top and revisit labeled episodes")
     args = ap.parse_args()
 
@@ -98,12 +117,16 @@ def main():
         ep = eps[i]
         name = ep.name
         try:
-            Image.fromarray(get_frame(ep, args.frame)).save(view)
+            frame = get_frame(ep, args.frame)
+            Image.fromarray(frame).save(view)
         except Exception as e:
             print(f"[{i + 1}/{len(eps)}] {name}: ERROR {e} — skipping")
             i += 1
             continue
-        show_in_terminal(view)
+        if args.width > 0:
+            render_ansi(frame, args.width)      # draw straight into the terminal
+        else:
+            show_in_terminal(view)              # fall back to external viewer / PNG preview
         cur = labels.get(name, "")
         ans = input(f"[{i + 1}/{len(eps)}] {name}{f'  [{cur}]' if cur else ''} > ").strip()
         if ans == "q":
