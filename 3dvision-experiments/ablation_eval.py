@@ -131,8 +131,14 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=Fals
         out["reached_bowl"] = float(reached_bowl)
         # ordered success: reach object, THEN bowl (object-before-bowl in the rollout)
         out["ordered_success"] = float(reached_obj and reached_bowl and i_bowl >= i_obj)
-        # gripper pattern: more closed at the object than at the bowl (grasp-then-release)
-        out["gripper_ok"] = float(roll_grip[i_obj] > roll_grip[i_bowl])
+        # gripper pattern: hand more actuated during transport (object->bowl) than before pickup,
+        # normalized per-episode. Window means are robust vs single-point comparison.
+        gn = np.clip((roll_grip - np.percentile(roll_grip, 5)) /
+                     (np.percentile(roll_grip, 95) - np.percentile(roll_grip, 5) + 1e-9), 0.0, 1.0)
+        i0, i1 = min(i_obj, i_bowl), max(i_obj, i_bowl)
+        transport = float(gn[i0:i1 + 1].mean()) if i1 > i0 else float(gn[i_obj])
+        before = float(gn[:max(i_obj, 1)].mean())
+        out["gripper_ok"] = float(transport > before)   # GT expect ~1; if ~0 the hand sign is flipped
     return out
 
 
