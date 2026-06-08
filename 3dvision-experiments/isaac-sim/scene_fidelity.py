@@ -22,7 +22,7 @@ from pxr import UsdGeom, UsdLux, UsdShade, Gf, Sdf
 # --- tunables -------------------------------------------------------------------
 TABLE_TOP_Z    = 1.807
 TEX_DIR        = "/workspace"          # where generated texture PNGs are written
-WOOD_TILES     = 2.5                   # larger plywood grain (was 6 -> too busy/orange)
+WOOD_TILES     = 1.0                   # wood maps ONCE across the tabletop (no tiling seams)
 DOME_INTENSITY = 800.0                # neutral daylight; lower so the plywood isn't washed white
 KEY_INTENSITY  = 1000.0
 KEY_ROT_XYZ    = (-50.0, 0.0, -35.0)
@@ -153,12 +153,11 @@ def apply_fidelity(stage, root="/World/Fidelity",
                 [(cx - R, cy + W, fz), (cx + R, cy + W, fz),
                  (cx + R, cy + W, fz + H), (cx - R, cy + W, fz + H)], WALL_RGB)
 
-    # 5) Recolour the real table mesh to plywood (so it blends under the tabletop quad
-    #    instead of showing its broken offline material).
+    # 5) Hide the real table mesh's RENDER (keep its physics collider so objects still rest
+    #    on it); the plywood tabletop quad above is the only visible surface -> no z-fight cross.
     tprim = stage.GetPrimAtPath(table_path)
     if tprim.IsValid():
-        wmat = _textured_material(stage, table_path + "/FidelityWood", wood_png)
-        UsdShade.MaterialBindingAPI.Apply(tprim).Bind(wmat, bindingStrength=UsdShade.Tokens.strongerThanDescendants)
+        UsdGeom.Imageable(tprim).MakeInvisible()
 
     # 6) Ball — only texture an IMPLICIT sphere (the eval's ball). A mesh ball (preview)
     #    carries its own per-face 4-colour displayColor, so leave it untouched.
