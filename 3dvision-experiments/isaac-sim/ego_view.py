@@ -22,6 +22,13 @@ EGO_CAM_POS    = (0.80, -0.78, 2.75)   # higher above the table
 EGO_CAM_TARGET = (0.85,  0.10, 1.60)   # ~53 deg below horizontal (steeper, more floor visible)
 EGO_HFOV_DEG   = 95.0          # Aria is wide (~110 hardware); 95 is a reasonable sim value
 
+# RecordingCamera = the HD video camera (not the policy input). The USD ships a stale pose
+# that now stares at empty sky, so we re-aim it at the workspace: a pulled-back 3rd-person
+# shot from the operator (-Y) side so the whole robot + table + objects are in the video.
+REC_CAM_POS    = (0.80, -2.10, 3.00)
+REC_CAM_TARGET = (0.85,  0.05, 1.70)
+REC_HFOV_DEG   = 60.0          # narrower than the policy cam -> a clean framed 3rd-person shot
+
 # Arm-hiding: drop the bulky base/shoulder/elbow links; keep wrist + hand + fingers so a
 # small end-effector still appears near the objects.
 _HIDE_SUBSTRINGS = ("link0", "link1", "link2", "link3", "link4", "link5")
@@ -44,6 +51,22 @@ def place_egocentric_camera(stage, cam_path="/World/ExternalCamera"):
     print(f"[ego] camera -> egocentric pos={EGO_CAM_POS} target={EGO_CAM_TARGET} hfov={EGO_HFOV_DEG}")
 
 
+def place_recording_camera(stage, cam_path="/World/RecordingCamera"):
+    """Re-aim the HD video camera at the workspace (16:9), so the recording isn't empty sky."""
+    cp = stage.GetPrimAtPath(cam_path)
+    if not cp.IsValid():
+        print(f"[ego] {cam_path} not found"); return
+    xf = UsdGeom.Xformable(cp); xf.ClearXformOpOrder()
+    xf.AddTranslateOp().Set(Gf.Vec3d(*REC_CAM_POS))
+    view = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*REC_CAM_POS), Gf.Vec3d(*REC_CAM_TARGET), Gf.Vec3d(0, 0, 1))
+    q = view.GetInverse().ExtractRotationQuat()
+    xf.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(Gf.Quatd(q.GetReal(), *q.GetImaginary()))
+    c = UsdGeom.Camera(cp); ha = 36.0
+    c.CreateHorizontalApertureAttr(ha); c.CreateVerticalApertureAttr(ha * 9.0 / 16.0)  # 16:9 HD
+    c.CreateFocalLengthAttr(ha / (2 * math.tan(math.radians(REC_HFOV_DEG) / 2)))
+    print(f"[ego] RecordingCamera -> 3rd-person pos={REC_CAM_POS} target={REC_CAM_TARGET}")
+
+
 def hide_robot_arm(stage, root="/World/fr3"):
     """Hide bulky arm links (render-only; physics/IK unaffected)."""
     n = 0
@@ -60,5 +83,6 @@ def hide_robot_arm(stage, root="/World/fr3"):
 
 def apply_egocentric(stage, hide_arm=False):
     place_egocentric_camera(stage)
+    place_recording_camera(stage)
     if hide_arm:
         hide_robot_arm(stage)
