@@ -30,6 +30,7 @@ from openpi.training import config as _config
 
 DATA_ROOT = "/cluster/work/cvg/data/Egoverse/lerobot_egoverse/egoverse/oic_human"
 CKPT_DEFAULT = "/cluster/work/cvg/data/rytsui/checkpoints/pi05_ego_human_oic/human_oic/29999"
+BASE_WEIGHTS = "/cluster/work/cvg/data/Egoverse/pi05_base_jax"  # untrained-baseline floor
 CONFIG_NAME = "pi05_ego_human_oic"
 DEFAULT_PROMPT = "put the object in the container"
 POS_DIM = 3        # [x,y,z]; dims 3-5 are the Euler angles
@@ -71,12 +72,26 @@ def main(
     num_episodes: int = 25,
     start_episode: int = 0,
     frame_stride: int = 5,
-    checkpoint_dir: str = CKPT_DEFAULT,
+    checkpoint_dir: str | None = None,
     norm_stats_dir: str | None = None,
     prompt: str = DEFAULT_PROMPT,
+    finetuned: bool = True,
 ):
+    # finetuned=False loads the untrained pi0.5 base weights as a floor baseline, mirroring
+    # run_inference.py: swap the LoRA gemma variants -> plain gemma so the base checkpoint
+    # loads cleanly (LoRA adapters init to zero, so the models match numerically at step 0).
+    if checkpoint_dir is None:
+        checkpoint_dir = CKPT_DEFAULT if finetuned else BASE_WEIGHTS
     cfg = _config.get_config(CONFIG_NAME)
+    if not finetuned:
+        cfg = dataclasses.replace(
+            cfg,
+            model=dataclasses.replace(
+                cfg.model, paligemma_variant="gemma_2b", action_expert_variant="gemma_300m"
+            ),
+        )
     data_cfg = cfg.data.create(cfg.assets_dirs, cfg.model)
+    # Base weights carry no oic norm stats; always fall back to the config-default oic stats there.
     ns_dir = pathlib.Path(norm_stats_dir) if norm_stats_dir else pathlib.Path(f"{checkpoint_dir}/assets/egoverse/oic_human")
     if not (ns_dir / "norm_stats.json").exists():
         ns_dir = cfg.assets_dirs / data_cfg.repo_id  # fall back to config default
@@ -84,7 +99,8 @@ def main(
     norm_stats = normalize.load(ns_dir)
 
     chunk_len = cfg.model.action_horizon
-    print(f"Loading {CONFIG_NAME} from {checkpoint_dir} (chunk_len={chunk_len})")
+    tag = "oic finetuned" if finetuned else "oic base"
+    print(f"Loading {CONFIG_NAME} [{tag}] from {checkpoint_dir} (chunk_len={chunk_len})")
     policy = policy_config.create_trained_policy(cfg, checkpoint_dir, norm_stats=norm_stats, default_prompt=prompt)
 
     all_pi0, all_zero, all_const, all_gd, all_pd = [], [], [], [], []
@@ -110,7 +126,7 @@ def main(
 
     pi0 = np.concatenate(all_pi0); zero = np.concatenate(all_zero); const = np.concatenate(all_const)
     print(f"\n=== Summary ({len(all_pi0)} chunks of {chunk_len}) ===")
-    for name, sq in [("oic finetuned", pi0), ("zero action", zero), ("const state", const)]:
+    for name, sq in [(tag, pi0), ("zero action", zero), ("const state", const)]:
         print(f"  {name:>14s}: total={sq.mean():.4f}  pos={sq[:, :POS_DIM].mean():.4f}  rot={sq[:, POS_DIM:].mean():.4f}")
     print("  per-dim MSE:", " ".join(f"{v:.3f}" for v in pi0.mean(axis=0)))
     motion_report(np.stack(all_pd), np.stack(all_gd))
