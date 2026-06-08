@@ -65,9 +65,12 @@ def main(argv):
             print(f"skip (need LABEL=path): {arg}")
             continue
         label, path = arg.split("=", 1)
+        if not path.strip():
+            print(f"skip ({label}: empty path — job missing/failed?)")
+            continue
         p = pathlib.Path(path)
-        if not p.exists():
-            print(f"skip (missing): {path}")
+        if not p.exists() or p.is_dir():
+            print(f"skip ({label}: no log at '{path}')")
             continue
         d = parse_log(p.read_text(errors="ignore"))
         d["label"] = label
