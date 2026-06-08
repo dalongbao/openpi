@@ -143,12 +143,11 @@ def apply_fidelity(stage, root="/World/Fidelity",
         wmat = _textured_material(stage, table_path + "/FidelityWood", wood_png)
         UsdShade.MaterialBindingAPI.Apply(tprim).Bind(wmat, bindingStrength=UsdShade.Tokens.strongerThanDescendants)
 
-    # 5) Ball — bigger + red/green like the real one.
+    # 5) Ball — only texture an IMPLICIT sphere (the eval's ball). A mesh ball (preview)
+    #    carries its own per-face 4-colour displayColor, so leave it untouched.
     bprim = stage.GetPrimAtPath(object_path)
-    if bprim.IsValid():
-        sph = UsdGeom.Sphere(bprim)
-        if sph:
-            sph.CreateRadiusAttr(BALL_RADIUS)
+    if bprim.IsValid() and bprim.IsA(UsdGeom.Sphere):
+        UsdGeom.Sphere(bprim).CreateRadiusAttr(BALL_RADIUS)
         bmat = _textured_material(stage, object_path + "/FidelityBall", ball_png, rough=0.5)
         UsdShade.MaterialBindingAPI.Apply(bprim).Bind(bmat, bindingStrength=UsdShade.Tokens.strongerThanDescendants)
 

@@ -31,7 +31,7 @@ from omni.isaac.core import World
 from omni.isaac.core.utils.stage import open_stage
 from omni.isaac.sensor import Camera
 import omni.usd
-from pxr import UsdGeom, Gf, UsdPhysics
+from pxr import UsdGeom, Gf, UsdPhysics, Sdf
 
 sys.path.insert(0, "/workspace")
 import scene_fidelity
@@ -68,11 +68,33 @@ for old in ("/World/plate_small", "/World/SM_Crate_A07_Yellow_01_physics"):
         p.SetActive(False)
 
 
-def add_sphere(path, pos, r=0.04):
-    s = UsdGeom.Sphere.Define(stage, path)
-    s.CreateRadiusAttr(r)
-    UsdGeom.Xformable(s).AddTranslateOp().Set(Gf.Vec3d(*pos))
-    s.CreateDisplayColorAttr([Gf.Vec3f(0.80, 0.15, 0.15)])
+def add_sphere(path, pos, r=0.055, nlon=24, nlat=12):
+    """4-colour ball as a tessellated sphere MESH with per-face colour (4 longitude wedges:
+    blue/yellow/green/red). A mesh with uniform displayColor needs no UVs, so it actually
+    shows 4 colours (an implicit UsdGeom.Sphere has no st -> texture averages to one colour)."""
+    cols = [Gf.Vec3f(0.04, 0.31, 0.68), Gf.Vec3f(0.65, 0.67, 0.14),
+            Gf.Vec3f(0.03, 0.40, 0.39), Gf.Vec3f(0.44, 0.08, 0.24)]  # blue, yellow, green, red
+    pts = []
+    for i in range(nlat + 1):
+        th = math.pi * i / nlat
+        for j in range(nlon):
+            ph = 2 * math.pi * j / nlon
+            pts.append(Gf.Vec3f(r * math.sin(th) * math.cos(ph),
+                                r * math.sin(th) * math.sin(ph), r * math.cos(th)))
+    counts, idx, facecols = [], [], []
+    for i in range(nlat):
+        for j in range(nlon):
+            a = i * nlon + j; b = i * nlon + (j + 1) % nlon
+            c = (i + 1) * nlon + (j + 1) % nlon; d = (i + 1) * nlon + j
+            counts.append(4); idx.extend([a, b, c, d])
+            ph = 2 * math.pi * (j + 0.5) / nlon
+            facecols.append(cols[int(ph / (math.pi / 2)) % 4])
+    m = UsdGeom.Mesh.Define(stage, path)
+    m.CreatePointsAttr(pts); m.CreateFaceVertexCountsAttr(counts); m.CreateFaceVertexIndicesAttr(idx)
+    m.CreateSubdivisionSchemeAttr("none")
+    pv = UsdGeom.PrimvarsAPI(m).CreatePrimvar("displayColor", Sdf.ValueTypeNames.Color3fArray, UsdGeom.Tokens.uniform)
+    pv.Set(facecols)
+    UsdGeom.Xformable(m).AddTranslateOp().Set(Gf.Vec3d(*pos))
 
 
 def add_bowl(path, pos, Rb=0.10, Rt=0.18, H=0.13, wall=0.025, n=32):
