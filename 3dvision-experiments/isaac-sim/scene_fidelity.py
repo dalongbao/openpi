@@ -24,11 +24,12 @@ TABLE_TOP_Z    = 1.807
 TEX_DIR        = "/workspace"          # where generated texture PNGs are written
 WOOD_TILES     = 2.5                   # larger plywood grain (was 6 -> too busy/orange)
 BACKDROP_TILES = 2.0                   # wall+floor backdrop texture repeats
-DOME_INTENSITY = 1100.0               # brighter, neutral daylight (real Aria frame is bright)
-KEY_INTENSITY  = 1500.0
+DOME_INTENSITY = 800.0                # neutral daylight; lower so the plywood isn't washed white
+KEY_INTENSITY  = 1000.0
 KEY_ROT_XYZ    = (-50.0, 0.0, -35.0)
 BALL_RADIUS    = 0.055                 # bigger than the eval default (0.04) -> easier to see
-ROOM_HALF      = 4.0                   # floor/walls extend +/- this (m) around the workspace
+ROOM_HALF      = 4.0                   # floor extends +/- this (m) around the workspace
+WALL_DIST      = 1.6                   # backdrop walls this far from workspace centre (closer = fills more)
 WALL_HEIGHT    = 3.0
 
 
@@ -54,7 +55,7 @@ def _backdrop_png(path, w=512, h=512, seed=1):
     rng = np.random.default_rng(seed)
     img = np.empty((h, w, 3), np.uint8)
     img[:, :] = (102, 80, 38)                       # teal wall  BGR of RGB(38,80,102)
-    floor_top = int(h * 0.60)
+    floor_top = int(h * 0.30)                        # mostly tile floor; thin wall strip on top
     img[floor_top:, :] = (62, 50, 56)               # dark grout BGR of RGB(56,50,62)
     bw, bh, m = 24, 15, 2
     for r0 in range(floor_top, h, bh):
@@ -135,14 +136,16 @@ def apply_fidelity(stage, root="/World/Fidelity",
                     (cx + R, cy + R, z - 0.01), (cx - R, cy + R, z - 0.01)],
                    wood_png, WOOD_TILES)
 
-    # 3) Backdrop walls — back (+X) and side (+Y): teal wall over a reddish floor-tile band.
+    # 3) Backdrop walls — back (+X) and side (+Y), brought close (WALL_DIST) so they fill the
+    #    camera background: reddish floor-tile band low, teal wall strip on top.
+    W = WALL_DIST
     _textured_quad(stage, root + "/BackWall",
-                   [(cx + R, cy - R, z), (cx + R, cy + R, z),
-                    (cx + R, cy + R, z + H), (cx + R, cy - R, z + H)],
+                   [(cx + W, cy - R, z), (cx + W, cy + R, z),
+                    (cx + W, cy + R, z + H), (cx + W, cy - R, z + H)],
                    backdrop_png, BACKDROP_TILES)
     _textured_quad(stage, root + "/SideWall",
-                   [(cx - R, cy + R, z), (cx + R, cy + R, z),
-                    (cx + R, cy + R, z + H), (cx - R, cy + R, z + H)],
+                   [(cx - R, cy + W, z), (cx + R, cy + W, z),
+                    (cx + R, cy + W, z + H), (cx - R, cy + W, z + H)],
                    backdrop_png, BACKDROP_TILES)
 
     # 4) Wood material on the actual table too (over its broken offline material).

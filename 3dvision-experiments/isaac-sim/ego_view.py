@@ -16,7 +16,7 @@ from pxr import UsdGeom, Gf
 
 # Head-height, operator (-Y) side, looking down-forward across the table at the objects,
 # so the gripper enters the lower frame like a hand in an egocentric view.
-EGO_CAM_POS    = (0.30, -1.00, 2.40)
+EGO_CAM_POS    = (0.45, -0.90, 2.25)
 EGO_CAM_TARGET = (0.95, -0.10, 1.81)
 EGO_HFOV_DEG   = 95.0          # Aria is wide (~110 hardware); 95 is a reasonable sim value
 
@@ -32,8 +32,9 @@ def place_egocentric_camera(stage, cam_path="/World/ExternalCamera"):
         print(f"[ego] {cam_path} not found"); return
     xf = UsdGeom.Xformable(cp); xf.ClearXformOpOrder()
     xf.AddTranslateOp().Set(Gf.Vec3d(*EGO_CAM_POS))
-    look = (Gf.Vec3d(*EGO_CAM_TARGET) - Gf.Vec3d(*EGO_CAM_POS)).GetNormalized()
-    q = Gf.Rotation(Gf.Vec3d(0, 0, -1), look).GetQuat()
+    # Proper look-at with world up = +Z so the horizon is LEVEL (no arbitrary roll/tilt).
+    view = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*EGO_CAM_POS), Gf.Vec3d(*EGO_CAM_TARGET), Gf.Vec3d(0, 0, 1))
+    q = view.GetInverse().ExtractRotationQuat()
     xf.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(Gf.Quatd(q.GetReal(), *q.GetImaginary()))
     c = UsdGeom.Camera(cp); ha = 36.0
     c.CreateHorizontalApertureAttr(ha); c.CreateVerticalApertureAttr(ha)
