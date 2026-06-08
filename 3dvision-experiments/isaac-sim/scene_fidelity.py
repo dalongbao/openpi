@@ -22,10 +22,10 @@ from pxr import UsdGeom, UsdLux, UsdShade, Gf, Sdf
 # --- tunables -------------------------------------------------------------------
 TABLE_TOP_Z    = 1.807
 TEX_DIR        = "/workspace"          # where generated texture PNGs are written
-WOOD_TILES     = 6.0                   # how many times the wood texture repeats across the floor
-BRICK_TILES    = 8.0
-DOME_INTENSITY = 700.0
-KEY_INTENSITY  = 2200.0
+WOOD_TILES     = 2.5                   # larger plywood grain (was 6 -> too busy/orange)
+BACKDROP_TILES = 2.0                   # wall+floor backdrop texture repeats
+DOME_INTENSITY = 1100.0               # brighter, neutral daylight (real Aria frame is bright)
+KEY_INTENSITY  = 1500.0
 KEY_ROT_XYZ    = (-50.0, 0.0, -35.0)
 BALL_RADIUS    = 0.055                 # bigger than the eval default (0.04) -> easier to see
 ROOM_HALF      = 4.0                   # floor/walls extend +/- this (m) around the workspace
@@ -33,33 +33,49 @@ WALL_HEIGHT    = 3.0
 
 
 # ---------------------------------------------------------------- procedural textures
+# Colours below are sampled from a real Aria training frame (so they already bake in the
+# scene lighting). Stored as RGB in the comments; cv2.imwrite writes BGR.
 def _wood_png(path, w=512, h=512, seed=0):
+    """Light blonde/greige plywood: low-contrast straight grain (matches the real table)."""
     rng = np.random.default_rng(seed)
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    rings = np.sin(xx * 0.05 + 6.0 * np.sin(yy * 0.010)) * 0.5 + 0.5
-    fine  = 0.5 + 0.5 * np.sin(xx * 0.6 + rng.standard_normal((h, w)) * 0.3)
-    v = np.clip(0.55 * rings + 0.3 * fine + 0.15 * rng.random((h, w)), 0, 1)
-    r = 0.42 + 0.30 * v; g = 0.26 + 0.20 * v; b = 0.12 + 0.10 * v
-    cv2.imwrite(path, (np.stack([b, g, r], -1) * 255).astype(np.uint8))  # cv2 = BGR
+    grain = 0.5 + 0.5 * np.sin(xx * 0.06 + 0.7 * np.sin(yy * 0.010))
+    fine = rng.standard_normal((h, w)) * 0.03
+    bright = np.clip(0.92 + 0.10 * (grain - 0.5) + fine, 0.7, 1.12)
+    base = np.array([0.62, 0.57, 0.545], np.float32)            # greige RGB ~ (158,146,139)
+    rgb = np.clip(base[None, None, :] * bright[..., None], 0, 1)
+    cv2.imwrite(path, (rgb[:, :, ::-1] * 255).astype(np.uint8))  # RGB -> BGR
 
 
-def _brick_png(path, w=512, h=512, bw=72, bh=30, mortar=5, seed=1):
+def _backdrop_png(path, w=512, h=512, seed=1):
+    """Background: muted teal WALL on top, dark reddish floor-TILE band on the bottom.
+    On a vertical wall quad this reads top->down as wall, tile floor, then the table —
+    matching the real frame's layered background."""
     rng = np.random.default_rng(seed)
-    img = np.full((h, w, 3), (70, 72, 86), np.uint8)             # mortar (BGR)
-    for r0 in range(0, h, bh):
+    img = np.empty((h, w, 3), np.uint8)
+    img[:, :] = (102, 80, 38)                       # teal wall  BGR of RGB(38,80,102)
+    floor_top = int(h * 0.60)
+    img[floor_top:, :] = (62, 50, 56)               # dark grout BGR of RGB(56,50,62)
+    bw, bh, m = 24, 15, 2
+    for r0 in range(floor_top, h, bh):
         off = (bw // 2) if ((r0 // bh) % 2) else 0
         for c0 in range(-bw, w, bw):
-            x0, x1 = c0 + off + mortar, c0 + off + bw - mortar
-            y0, y1 = r0 + mortar, r0 + bh - mortar
-            col = (int(40 + rng.integers(0, 25)), int(48 + rng.integers(0, 25)), int(120 + rng.integers(0, 45)))
+            x0, x1 = c0 + off + m, c0 + off + bw - m
+            y0, y1 = r0 + m, r0 + bh - m
+            col = (int(55 + rng.integers(0, 20)), int(20 + rng.integers(0, 18)),
+                   int(95 + rng.integers(0, 40)))   # BGR -> reddish-maroon tile
             cv2.rectangle(img, (x0, y0), (x1, y1), col, -1)
     cv2.imwrite(path, img)
 
 
 def _ball_png(path, w=256, h=256):
-    img = np.zeros((h, w, 3), np.uint8)
-    img[:, : w // 2] = (40, 40, 200)     # left half red  (BGR)
-    img[:, w // 2:] = (40, 170, 40)      # right half green
+    """Four-colour ball: quadrants blue / yellow / green / red (sampled RGB; written BGR)."""
+    img = np.empty((h, w, 3), np.uint8)
+    hw, hh = w // 2, h // 2
+    img[:hh, :hw] = (173, 78, 10)     # blue   RGB(10,78,173)
+    img[:hh, hw:] = (36, 171, 167)    # yellow RGB(167,171,36)
+    img[hh:, :hw] = (99, 101, 8)      # green  RGB(8,101,99)
+    img[hh:, hw:] = (60, 21, 112)     # red    RGB(112,21,60)
     cv2.imwrite(path, img)
 
 
@@ -98,17 +114,17 @@ def _textured_quad(stage, path, corners, tex_png, st_max):
 def apply_fidelity(stage, root="/World/Fidelity",
                    table_path="/World/SM_HeavyDutyPackingTable_C02_01",
                    object_path="/World/object"):
-    wood_png  = os.path.join(TEX_DIR, "tex_wood.png")
-    brick_png = os.path.join(TEX_DIR, "tex_brick.png")
-    ball_png  = os.path.join(TEX_DIR, "tex_ball.png")
-    _wood_png(wood_png); _brick_png(brick_png); _ball_png(ball_png)
+    wood_png     = os.path.join(TEX_DIR, "tex_wood.png")
+    backdrop_png = os.path.join(TEX_DIR, "tex_backdrop.png")
+    ball_png     = os.path.join(TEX_DIR, "tex_ball.png")
+    _wood_png(wood_png); _backdrop_png(backdrop_png); _ball_png(ball_png)
 
     cx, cy, z = 0.8, 0.0, TABLE_TOP_Z
     R, H = ROOM_HALF, WALL_HEIGHT
 
     # 1) Lights.
     dome = UsdLux.DomeLight.Define(stage, root + "/DomeLight")
-    dome.CreateIntensityAttr(DOME_INTENSITY); dome.CreateColorAttr(Gf.Vec3f(0.92, 0.92, 0.95))
+    dome.CreateIntensityAttr(DOME_INTENSITY); dome.CreateColorAttr(Gf.Vec3f(0.95, 0.96, 1.0))
     key = UsdLux.DistantLight.Define(stage, root + "/KeyLight")
     key.CreateIntensityAttr(KEY_INTENSITY); key.CreateAngleAttr(1.0)
     UsdGeom.Xformable(key).AddRotateXYZOp().Set(Gf.Vec3f(*KEY_ROT_XYZ))
@@ -119,15 +135,15 @@ def apply_fidelity(stage, root="/World/Fidelity",
                     (cx + R, cy + R, z - 0.01), (cx - R, cy + R, z - 0.01)],
                    wood_png, WOOD_TILES)
 
-    # 3) Brick walls — back (+X) and side (+Y), tall, filling the camera background.
+    # 3) Backdrop walls — back (+X) and side (+Y): teal wall over a reddish floor-tile band.
     _textured_quad(stage, root + "/BackWall",
                    [(cx + R, cy - R, z), (cx + R, cy + R, z),
                     (cx + R, cy + R, z + H), (cx + R, cy - R, z + H)],
-                   brick_png, BRICK_TILES)
+                   backdrop_png, BACKDROP_TILES)
     _textured_quad(stage, root + "/SideWall",
                    [(cx - R, cy + R, z), (cx + R, cy + R, z),
                     (cx + R, cy + R, z + H), (cx - R, cy + R, z + H)],
-                   brick_png, BRICK_TILES)
+                   backdrop_png, BACKDROP_TILES)
 
     # 4) Wood material on the actual table too (over its broken offline material).
     tprim = stage.GetPrimAtPath(table_path)

@@ -42,8 +42,10 @@ HD_RES     = (1280, 720)
 
 # Same object/bowl positions + camera as eval_script_object_in_bowl.py so the preview
 # matches what the policy will actually see. Keep these in sync if the eval changes.
-OBJECT_POS = (0.527, -0.405, 1.85)
-BOWL_POS   = (1.463, -0.020, 1.807)
+# Preview-only placement: bowl near the camera look-target with the ball sitting in it,
+# so both read large/centred like the real Aria frame (the eval uses its own positions).
+OBJECT_POS = (0.85, -0.13, 1.86)
+BOWL_POS   = (0.85, -0.15, 1.807)
 CAM_POS    = Gf.Vec3d(-0.2, -0.8, 2.6)
 CAM_TARGET = Gf.Vec3d(0.8, -0.15, 1.82)
 CAM_HFOV   = 90.0
@@ -98,7 +100,7 @@ def add_bowl(path, pos, Rb=0.10, Rt=0.18, H=0.13, wall=0.025, n=32):
     m.CreatePointsAttr(pts); m.CreateFaceVertexCountsAttr(counts); m.CreateFaceVertexIndicesAttr(idx)
     m.CreateSubdivisionSchemeAttr("none"); m.CreateDoubleSidedAttr(True)
     UsdGeom.Xformable(m).AddTranslateOp().Set(Gf.Vec3d(*pos))
-    m.CreateDisplayColorAttr([Gf.Vec3f(0.45, 0.22, 0.55)])
+    m.CreateDisplayColorAttr([Gf.Vec3f(0.25, 0.23, 0.43)])   # dark unsaturated purple (real bowl)
 
 
 add_sphere("/World/object", OBJECT_POS)
