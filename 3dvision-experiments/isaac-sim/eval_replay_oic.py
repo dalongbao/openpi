@@ -42,6 +42,7 @@ os.makedirs(RESULTS, exist_ok=True)
 HD = (1280, 720)
 EE_FRAME     = os.environ.get("EE_FRAME") or "panda_hand"
 EULER_ORDER  = os.environ.get("EULER_ORDER") or "XYZ"
+POS_MAP      = os.environ.get("OIC_POS_MAP") or "x,y,z"   # base<->model position remap (frame sweep)
 # All 12 Tait-Bryan orders (3 distinct axes): UPPER=intrinsic, lower=extrinsic (scipy).
 ORDERS = ["XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX",
           "xyz", "xzy", "yxz", "yzx", "zxy", "zyx"]
@@ -155,7 +156,7 @@ try:
     panels = []
     for order in ORDERS:
         try:
-            k = oic_kinematics.OicKinematics(ee_frame=EE_FRAME, euler_order=order)
+            k = oic_kinematics.OicKinematics(ee_frame=EE_FRAME, euler_order=order, pos_map=POS_MAP)
             j, ok = k.ik6(demo[REP], None)
             label = f"{order}  ik_ok={bool(ok)}"
             if ok and j is not None:
@@ -181,7 +182,7 @@ try:
     # 2) FULL REPLAY video under EULER_ORDER
     # --------------------------------------------------------------------
     print(f"[replay] full replay under EULER_ORDER={EULER_ORDER}")
-    kin = oic_kinematics.OicKinematics(ee_frame=EE_FRAME, euler_order=EULER_ORDER)
+    kin = oic_kinematics.OicKinematics(ee_frame=EE_FRAME, euler_order=EULER_ORDER, pos_map=POS_MAP)
     vid = cv2.VideoWriter(f"{RESULTS}/replay_{EULER_ORDER}.mp4",
                           cv2.VideoWriter_fourcc(*"mp4v"), 30, HD)
     world.reset(); franka.initialize()
