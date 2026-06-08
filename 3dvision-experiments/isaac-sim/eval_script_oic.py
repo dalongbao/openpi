@@ -152,9 +152,12 @@ if _cp.IsValid():
     _c.CreateFocalLengthAttr(_ha / (2 * math.tan(math.radians(90.0) / 2)))
 
 # Optional egocentric view (override camera + hide arm) to match the Aria training view.
+ego_view = None
+_arm_hidden = False
 if os.environ.get("EGOCENTRIC", "0").lower() in ("1", "true", "yes", "y"):
     import ego_view
-    ego_view.apply_egocentric(_stage, hide_arm=os.environ.get("EGO_HIDE_ARM", "0").lower() in ("1", "true", "yes", "y"))
+    _arm_hidden = os.environ.get("EGO_HIDE_ARM", "0").lower() in ("1", "true", "yes", "y")
+    ego_view.apply_egocentric(_stage, hide_arm=_arm_hidden)
 
 world = World(stage_units_in_meters=1.0, physics_dt=1.0 / 50.0, rendering_dt=1.0 / 50.0)
 world.reset()
@@ -179,7 +182,8 @@ cv2.imwrite(f"{RESULTS_DIR}/policy_cam_init.png", cv2.cvtColor(get_frame(externa
 # 6-DIM KINEMATICS + EULER-ORDER SWEEP
 # --------------------------------------------------------------------
 import oic_kinematics
-kin = oic_kinematics.OicKinematics(ee_frame=EE_FRAME, euler_order=EULER_ORDER)
+POS_MAP = os.environ.get("OIC_POS_MAP") or "x,y,z"   # base->model position remap to sweep the frame
+kin = oic_kinematics.OicKinematics(ee_frame=EE_FRAME, euler_order=EULER_ORDER, pos_map=POS_MAP)
 
 # Sweep: IK the action-mean pose under several euler orders. The right one is reachable
 # AND yields a sensible (non-extreme) posture. If ALL fail, the position frame is wrong.
@@ -233,8 +237,16 @@ try:
 
     print(f"[run] Starting oic eval for {NUM_STEPS} steps...")
     for step in range(NUM_STEPS):
-        policy_img = get_frame(external_cam, POLICY_CAM_RES)
-        hd_img     = get_frame(recording_cam, HD_VIDEO_RES)
+        policy_img = get_frame(external_cam, POLICY_CAM_RES)   # armless (in-distribution)
+        # 3rd-person recording: when the arm is hidden for the POLICY, temporarily show it so
+        # the OUTSIDE video shows the robot in motion, then hide it again for the policy renders.
+        if _arm_hidden and ego_view is not None:
+            ego_view.set_arm_visible(_stage, True)
+            world.render(); world.render()
+            hd_img = get_frame(recording_cam, HD_VIDEO_RES)
+            ego_view.set_arm_visible(_stage, False)
+        else:
+            hd_img = get_frame(recording_cam, HD_VIDEO_RES)
         joint_pos  = franka.get_joint_positions()
         if joint_pos is None:
             joint_pos = np.zeros(9, dtype=np.float32)

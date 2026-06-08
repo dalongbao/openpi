@@ -67,8 +67,10 @@ def place_recording_camera(stage, cam_path="/World/RecordingCamera"):
     print(f"[ego] RecordingCamera -> 3rd-person pos={REC_CAM_POS} target={REC_CAM_TARGET}")
 
 
-def hide_robot_arm(stage, root="/World/fr3"):
-    """Hide bulky arm links (render-only; physics/IK unaffected)."""
+def set_arm_visible(stage, visible, root="/World/fr3"):
+    """Show/hide the bulky arm links (link0-5) at runtime; render-only, physics/IK unaffected.
+    Lets the eval keep the POLICY view armless while toggling the arm ON for the 3rd-person
+    recording capture, so the outside video shows the robot in motion."""
     n = 0
     for prim in stage.Traverse():
         if not str(prim.GetPath()).startswith(root):
@@ -77,7 +79,15 @@ def hide_robot_arm(stage, root="/World/fr3"):
         if any(k in name for k in _KEEP_SUBSTRINGS):
             continue
         if any(h in name for h in _HIDE_SUBSTRINGS):
-            UsdGeom.Imageable(prim).MakeInvisible(); n += 1
+            im = UsdGeom.Imageable(prim)
+            im.MakeVisible() if visible else im.MakeInvisible()
+            n += 1
+    return n
+
+
+def hide_robot_arm(stage, root="/World/fr3"):
+    """Hide bulky arm links (render-only; physics/IK unaffected)."""
+    n = set_arm_visible(stage, False, root)
     print(f"[ego] hid {n} arm-link prims (render-only)")
 
 
