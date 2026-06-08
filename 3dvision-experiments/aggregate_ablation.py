@@ -11,7 +11,7 @@ import sys
 
 import numpy as np
 
-PRIMARY = "cos_dir"   # headline metric (higher=better); rollout_endpoint_err is lower=better
+PRIMARY = "ordered_success"   # task-space proxy (reach object then bowl); higher=better
 BASELINE = "R-ID_only"
 
 
@@ -32,7 +32,8 @@ def main(paths):
     if not conds:
         print("no JSONs found"); return
 
-    keys = ["cos_dir", "mag_ratio", "arm_mse", "arm_mse_const", "rollout_endpoint_err", "rollout_rmse"]
+    keys = ["ordered_success", "reached_object", "reached_bowl", "reach_object_err",
+            "reach_bowl_err", "gripper_ok", "cos_dir", "rollout_endpoint_err"]
     print(f"{'condition':<16} {'N':>3} " + " ".join(f"{k:>16}" for k in keys))
     for c, d in sorted(conds.items()):
         pe = d["per_episode"]; n = len(pe)
