@@ -53,6 +53,18 @@ ACTION_DIM = 24    # 7 arm + 17 hand
 SUCCESS_THRESH = 0.08   # m; "reached" the object/bowl region (gripper-scale tolerance)
 
 
+def kabsch(P, Q):
+    """Best proper rotation R and LS scale s mapping pred vectors P (N,3) onto GT Q (N,3):
+    argmin ||s R p_i - q_i||. Vectors (displacements), so no centering. Returns (R, s)."""
+    H = P.T @ Q
+    U, _, Vt = np.linalg.svd(H)
+    d = np.sign(np.linalg.det(Vt.T @ U.T))
+    R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T          # R @ p_i ≈ q_i
+    RP = P @ R.T
+    s = float((RP * Q).sum() / ((P * P).sum() + 1e-12))   # cosine is scale-free; s is just reported
+    return R, s
+
+
 def detect_grasp_release(f, total):
     """From GT, find the object & bowl positions (task-space subgoals), path-invariant.
     object = EE position when the hand first closes; bowl = where it first re-opens.
@@ -125,6 +137,8 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=Fals
             mag_ratio=float(pmag[mv].mean() / (gmag[mv].mean() + 1e-9)),
             cos_dir=float(np.nanmean(np.sum(pd * gd, 1)[mv] / (pmag[mv] * gmag[mv] + 1e-9))),
         )
+        out["_gd"] = gd[mv]          # raw moving GT/pred displacements (3-vecs) for the global Kabsch fit
+        out["_pd"] = pd[mv]          # stripped before JSON in main()
         if full_sq:
             full_sq = np.concatenate(full_sq); zero_sq = np.concatenate(zero_sq); const_sq = np.concatenate(const_sq)
             out.update(arm_mse=float(full_sq[:, :ARM_DIM].mean()), hand_mse=float(full_sq[:, ARM_DIM:].mean()),
@@ -198,6 +212,7 @@ def main(
     gt_check: bool = False,              # self-test: score GT actions (no policy) — expect ordered_success≈1
     state_dim: int = ACTION_DIM,        # 24 = robot space; 6 = human/oic EE-only model (POSITION-only scoring)
     norm_stats_dir: str | None = None,  # override norm-stats path (e.g. <ckpt>/assets/egoverse/oic_human)
+    align: bool = False,                # fit ONE global rotation+scale (Kabsch) pred->GT, report post-align cos
     output_dir: str = "/cluster/scratch/lichin/pi0_test/ablation",
 ):
     cfg = _config.get_config(config_name)
@@ -230,9 +245,11 @@ def main(
     print(f"[{condition}] {len(eps)} held-out episodes")
 
     per_ep = []
+    gd_all, pd_all = [], []          # moving displacement pairs across episodes, for the global Kabsch fit
     for ep in eps:
         try:
             m = eval_episode(policy, ep, frame_stride, chunk_len, prompt, gt_check=gt_check, state_dim=state_dim)
+            gd_all.append(m.pop("_gd")); pd_all.append(m.pop("_pd"))   # strip arrays (not JSON-serializable)
             m["episode"] = ep.name
             per_ep.append(m)
             grip = "-" if m["gripper_ok"] != m["gripper_ok"] else int(m["gripper_ok"])  # nan -> "-"
@@ -249,6 +266,25 @@ def main(
     summary = {k: float(np.nanmean([m[k] for m in per_ep])) for k in keys}  # nanmean: skip N/A (6-dim) metrics
     summary["n_episodes"] = len(per_ep)
     print(f"\n[{condition}] SUMMARY: " + "  ".join(f"{k}={summary[k]:.4f}" for k in keys))
+
+    if align:
+        # ONE global rotation+scale best-fitting pred displacements -> GT (disentangles a frame/scale
+        # mismatch from genuine no-signal). If raw cos~0 but aligned cos jumps high, it's purely a
+        # convention mismatch (a frame conversion would recover it); if aligned cos stays ~0, no transfer.
+        from scipy.spatial.transform import Rotation as _R
+        G = np.concatenate(gd_all); P = np.concatenate(pd_all)
+        R, s = kabsch(P, G)
+        RP = P @ R.T
+        gmag = np.linalg.norm(G, axis=1); pmag = np.linalg.norm(RP, axis=1); mv = (gmag > 1e-3) & (pmag > 1e-9)
+        aligned = float(np.nanmean((RP[mv] * G[mv]).sum(1) / (pmag[mv] * gmag[mv])))
+        euler = _R.from_matrix(R).as_euler("xyz", degrees=True)
+        summary["cos_dir_aligned"] = aligned
+        summary["align_scale"] = s
+        summary["align_rot_euler_deg"] = [float(x) for x in euler]
+        print(f"[{condition}] ALIGNED (global Kabsch, n={mv.sum()} chunks): "
+              f"cos_dir {summary['cos_dir']:.3f} -> {aligned:.3f}  | scale={s:.2f}  "
+              f"| rot(xyz,deg)=[{euler[0]:.0f},{euler[1]:.0f},{euler[2]:.0f}]")
+        print(f"[{condition}] -> {'frame/scale mismatch (convertible)' if aligned > 0.4 else 'no transfer even after alignment'}")
 
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
     out = pathlib.Path(output_dir) / f"{condition}.json"
