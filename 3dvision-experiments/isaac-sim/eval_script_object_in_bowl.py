@@ -186,97 +186,13 @@ for _old in ("/World/plate_small", "/World/SM_Crate_A07_Yellow_01_physics"):
         _p.SetActive(False)
         print(f"[init] Deactivated {_old}")
 
-_OBJECT_POS = (0.527, -0.405, 1.85)   # was plate_small (Z lifted so cube rests on table)
-_BOWL_POS   = (1.463, -0.020, 1.807)  # was crate (bowl bottom at table surface)
-
-
-def _add_sphere_object(stage, path, pos, radius=0.04):
-    # Small ball to match the real scene (red/green ball; rendered solid red here).
-    sph = UsdGeom.Sphere.Define(stage, path)
-    sph.CreateRadiusAttr(radius)
-    UsdGeom.Xformable(sph).AddTranslateOp().Set(Gf.Vec3d(*pos))
-    prim = sph.GetPrim()
-    UsdPhysics.CollisionAPI.Apply(prim)            # analytic sphere collider
-    UsdPhysics.RigidBodyAPI.Apply(prim)            # dynamic
-    UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(0.03)
-    sph.CreateDisplayColorAttr([Gf.Vec3f(0.80, 0.15, 0.15)])
-    print(f"[init] Added sphere object at {path} {pos} r={radius}")
-
-
-def _build_bowl_mesh(Rb=0.10, Rt=0.18, H=0.13, wall=0.025, n=24):
-    """Open conical cup (watertight, no degenerate apex). Opens +Z (stage upAxis=Z)."""
-    pts = []
-
-    def ring(r, z):
-        base = len(pts)
-        for j in range(n):
-            a = 2.0 * math.pi * j / n
-            pts.append(Gf.Vec3f(r * math.cos(a), r * math.sin(a), z))
-        return base
-
-    ob = ring(Rb, 0.0)            # outer bottom
-    ot = ring(Rt, H)             # outer top (rim, outer)
-    it = ring(Rt - wall, H)      # inner top (rim, inner)
-    ib = ring(Rb - wall, wall)   # inner bottom
-    oc = len(pts); pts.append(Gf.Vec3f(0, 0, 0.0))    # outer bottom center
-    ic = len(pts); pts.append(Gf.Vec3f(0, 0, wall))   # inner floor center
-
-    counts, idx = [], []
-
-    def quad(a, b, c, d):
-        counts.append(4); idx.extend([a, b, c, d])
-
-    def tri(a, b, c):
-        counts.append(3); idx.extend([a, b, c])
-
-    for j in range(n):
-        k = (j + 1) % n
-        quad(ob + j, ob + k, ot + k, ot + j)   # outer wall
-        quad(ot + j, ot + k, it + k, it + j)   # rim annulus
-        quad(it + j, it + k, ib + k, ib + j)   # inner wall
-        tri(ic, ib + k, ib + j)                # inner floor
-        tri(oc, ob + j, ob + k)                # outer underside
-    return pts, counts, idx
-
-
-def _add_bowl(stage, path, pos):
-    mesh = UsdGeom.Mesh.Define(stage, path)
-    pts, counts, idx = _build_bowl_mesh()
-    mesh.CreatePointsAttr(pts)
-    mesh.CreateFaceVertexCountsAttr(counts)
-    mesh.CreateFaceVertexIndicesAttr(idx)
-    mesh.CreateSubdivisionSchemeAttr("none")
-    mesh.CreateDoubleSidedAttr(True)
-    UsdGeom.Xformable(mesh).AddTranslateOp().Set(Gf.Vec3d(*pos))
-    prim = mesh.GetPrim()
-    UsdPhysics.CollisionAPI.Apply(prim)
-    UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr("none")  # exact triangle mesh => concave
-    mesh.CreateDisplayColorAttr([Gf.Vec3f(0.45, 0.22, 0.55)])  # purple, matches real bowl
-    print(f"[init] Added bowl at {path} {pos}")
-
-
-def _make_table_wooden(stage, table_path="/World/SM_HeavyDutyPackingTable_C02_01"):
-    # Override the table's (broken/offline) MDL materials with a flat wooden-brown
-    # UsdPreviewSurface, bound strongerThanDescendants so it wins over the mesh bindings.
-    tprim = stage.GetPrimAtPath(table_path)
-    if not tprim.IsValid():
-        print(f"[WARN] table {table_path} not found — skipping wooden override")
-        return
-    mat = UsdShade.Material.Define(stage, table_path + "/WoodenMat")
-    shader = UsdShade.Shader.Define(stage, table_path + "/WoodenMat/PBR")
-    shader.CreateIdAttr("UsdPreviewSurface")
-    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(0.40, 0.26, 0.13))
-    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.75)
-    shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
-    mat.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
-    UsdShade.MaterialBindingAPI.Apply(tprim).Bind(
-        mat, bindingStrength=UsdShade.Tokens.strongerThanDescendants)
-    print(f"[init] Bound wooden-brown material to {table_path}")
-
-
-_add_sphere_object(_stage, "/World/object", _OBJECT_POS)
-_add_bowl(_stage, "/World/bowl", _BOWL_POS)
-_make_table_wooden(_stage)
+# --- Object + bowl from the SHARED scene module: build EXACTLY the scene_preview scene
+# (4-colour mesh ball + wide dusty-purple bowl at the canonical positions), with physics so
+# the ball is graspable and drops into the bowl. The table look is handled by scene_fidelity. ---
+sys.path.insert(0, "/workspace")
+import scene_build
+scene_build.add_ball(_stage, "/World/object", scene_build.OBJECT_POS)
+scene_build.add_bowl(_stage, "/World/bowl", scene_build.BOWL_POS)
 
 # Opt-in scene realism (lights, floor, backdrop) to reduce SigLIP OOD. Off by default
 # so the validated path is unchanged; enable with SCENE_FIDELITY=1. Preview the look

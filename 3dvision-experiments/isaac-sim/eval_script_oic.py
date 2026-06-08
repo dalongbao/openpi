@@ -127,51 +127,12 @@ for _old in ("/World/plate_small", "/World/SM_Crate_A07_Yellow_01_physics"):
     if _p.IsValid():
         _p.SetActive(False)
 
-_OBJECT_POS = (0.527, -0.405, 1.85)
-_BOWL_POS   = (1.463, -0.020, 1.807)
-
-
-def _add_sphere(stage, path, pos, radius=0.04):
-    s = UsdGeom.Sphere.Define(stage, path); s.CreateRadiusAttr(radius)
-    UsdGeom.Xformable(s).AddTranslateOp().Set(Gf.Vec3d(*pos))
-    pr = s.GetPrim()
-    UsdPhysics.CollisionAPI.Apply(pr); UsdPhysics.RigidBodyAPI.Apply(pr)
-    UsdPhysics.MassAPI.Apply(pr).CreateMassAttr(0.03)
-    s.CreateDisplayColorAttr([Gf.Vec3f(0.80, 0.15, 0.15)])
-
-
-def _add_bowl(stage, path, pos, Rb=0.10, Rt=0.18, H=0.13, wall=0.025, n=32):
-    pts = []
-
-    def ring(r, z):
-        b = len(pts)
-        for j in range(n):
-            a = 2 * math.pi * j / n
-            pts.append(Gf.Vec3f(r * math.cos(a), r * math.sin(a), z))
-        return b
-
-    ob = ring(Rb, 0.0); ot = ring(Rt, H); it = ring(Rt - wall, H); ib = ring(Rb - wall, wall)
-    oc = len(pts); pts.append(Gf.Vec3f(0, 0, 0.0)); ic = len(pts); pts.append(Gf.Vec3f(0, 0, wall))
-    counts, idx = [], []
-
-    def quad(a, b, c, d): counts.append(4); idx.extend([a, b, c, d])
-    def tri(a, b, c): counts.append(3); idx.extend([a, b, c])
-
-    for j in range(n):
-        k = (j + 1) % n
-        quad(ob + j, ob + k, ot + k, ot + j); quad(ot + j, ot + k, it + k, it + j)
-        quad(it + j, it + k, ib + k, ib + j); tri(ic, ib + k, ib + j); tri(oc, ob + j, ob + k)
-    m = UsdGeom.Mesh.Define(stage, path)
-    m.CreatePointsAttr(pts); m.CreateFaceVertexCountsAttr(counts); m.CreateFaceVertexIndicesAttr(idx)
-    m.CreateSubdivisionSchemeAttr("none"); m.CreateDoubleSidedAttr(True)
-    UsdGeom.Xformable(m).AddTranslateOp().Set(Gf.Vec3d(*pos))
-    pr = m.GetPrim()
-    UsdPhysics.CollisionAPI.Apply(pr); UsdPhysics.MeshCollisionAPI.Apply(pr).CreateApproximationAttr("none")
-    m.CreateDisplayColorAttr([Gf.Vec3f(0.45, 0.22, 0.55)])
-
-
-_add_sphere(_stage, "/World/object", _OBJECT_POS)
-_add_bowl(_stage, "/World/bowl", _BOWL_POS)
+# --- Object + bowl from the SHARED scene module: build EXACTLY the scene_preview scene
+# (4-colour mesh ball + wide dusty-purple bowl at the canonical positions), with physics. ---
+sys.path.insert(0, "/workspace")
+import scene_build
+scene_build.add_ball(_stage, "/World/object", scene_build.OBJECT_POS)
+scene_build.add_bowl(_stage, "/World/bowl", scene_build.BOWL_POS)
 
 # Optional scene realism (shared with the object_in_bowl eval).
 if os.environ.get("SCENE_FIDELITY", "0").lower() in ("1", "true", "yes", "y"):
