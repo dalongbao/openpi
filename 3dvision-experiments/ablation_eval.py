@@ -15,6 +15,15 @@ Metrics (per episode, then aggregated):
                           on images, since there is no sim), compare the resulting EE-position
                           trajectory to the demo's. Captures compounding error.
 
+POSITION (action dims 0-2) is the cross-model yardstick: it is shared by the 24-dim robot
+space and the 6-dim human/oic EE-only space, so models of EITHER dim are scored on the SAME
+held-out R-ID frames with NO retraining/convention-unification. Pass `--state-dim 6` for a
+6-dim model: its input state is rebuilt from the robot frame as [xyz + Euler], and only
+position metrics (cos_dir, mag_ratio, pos_mse, rollout, reach/ordered-success) are reported;
+rotation/hand metrics (arm_mse/hand_mse/gripper_ok) are N/A (NaN). CAVEAT: assumes robot and
+human POSITION share a frame/scale — if they differ by a rotation, the 6-dim model's score is
+a lower bound (frame mismatch penalizes it), not a clean capability read.
+
 Writes a JSON of per-episode + summary metrics; aggregate across conditions with
 aggregate_ablation.py.
 
@@ -31,6 +40,7 @@ import pathlib
 import h5py
 import numpy as np
 import tyro
+from scipy.spatial.transform import Rotation as _Rotation
 
 from openpi.policies import policy_config
 from openpi.shared import normalize
@@ -67,38 +77,62 @@ def load_frame(f, idx):
     return np.asarray(img), state
 
 
-def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=False):
+def make_state(vec, state_dim):
+    """Build the policy input state at the model's expected dim from a robot state vector.
+    24-dim robot models get the native [arm EE pose(7: xyz+quat xyzw) + hand(17)]. A 6-dim
+    (human/oic) model gets [xyz + Euler(xyz)] — rotation order is a best-effort guess (the
+    oic Euler convention is unknown), so only POSITION is trusted downstream."""
+    vec = np.asarray(vec, dtype=np.float32)
+    if len(vec) == state_dim:
+        return vec                                  # already in the model's space (e.g. rollout feedback)
+    if state_dim >= ACTION_DIM:
+        return vec                                  # 24-dim robot space, pass through
+    eul = _Rotation.from_quat(vec[3:ARM_DIM]).as_euler("xyz")  # quat xyzw -> 3 Euler
+    return np.concatenate([vec[:POS_DIM], eul]).astype(np.float32)
+
+
+def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=False, state_dim=ACTION_DIM):
+    """Score one R-ID episode. POSITION (dims 0-2) is the cross-model yardstick and works for
+    any action dim; the full pose/hand metrics are computed only for 24-dim (robot-space) models."""
     out = {}
     with h5py.File(h5_path, "r") as f:
         total = f["observations/qpos_arm"].shape[0]
         ids = list(range(0, total - chunk_len, frame_stride))
-        pi0, zero, const, gd, pd = [], [], [], [], []
+        pos_sq, full_sq, zero_sq, const_sq, gd, pd = [], [], [], [], [], []
         for idx in ids:
             gt = np.concatenate([f["actions_arm"][idx:idx + chunk_len],
                                  f["actions_hand"][idx:idx + chunk_len]], axis=1)  # (chunk,24)
-            state = np.concatenate([f["observations/qpos_arm"][idx], f["observations/qpos_hand"][idx]]).astype(np.float32)
+            state24 = np.concatenate([f["observations/qpos_arm"][idx], f["observations/qpos_hand"][idx]]).astype(np.float32)
             if gt_check:
                 pred = gt                                  # self-test: GT is the "prediction"
             else:
                 img, _ = load_frame(f, idx)
                 pred = np.asarray(policy.infer(
-                    {"observation/image": img, "observation/state": state, "prompt": prompt})["actions"])[:chunk_len]
-            pi0.append((pred - gt) ** 2); zero.append(gt ** 2); const.append((state[None] - gt) ** 2)
-            gd.append(gt[-1, :POS_DIM] - state[:POS_DIM]); pd.append(pred[-1, :POS_DIM] - state[:POS_DIM])
+                    {"observation/image": img, "observation/state": make_state(state24, state_dim),
+                     "prompt": prompt})["actions"])[:chunk_len]
+            # position (dims 0-2) is shared across the 24-dim and 6-dim action spaces -> the comparable metric
+            pos_sq.append((pred[:, :POS_DIM] - gt[:, :POS_DIM]) ** 2)
+            gd.append(gt[-1, :POS_DIM] - state24[:POS_DIM]); pd.append(pred[-1, :POS_DIM] - state24[:POS_DIM])
+            if pred.shape[1] >= ACTION_DIM:                # full pose+hand metrics: robot-space (24-dim) only
+                full_sq.append((pred - gt) ** 2); zero_sq.append(gt ** 2); const_sq.append((state24[None] - gt) ** 2)
 
-        pi0 = np.concatenate(pi0); zero = np.concatenate(zero); const = np.concatenate(const)
+        pos_sq = np.concatenate(pos_sq)
         gd = np.stack(gd); pd = np.stack(pd)
         gmag = np.linalg.norm(gd, axis=1); pmag = np.linalg.norm(pd, axis=1); mv = gmag > 1e-3
         out.update(
             n_chunks=len(ids),
-            arm_mse=float(pi0[:, :ARM_DIM].mean()), hand_mse=float(pi0[:, ARM_DIM:].mean()),
-            pos_mse=float(pi0[:, :POS_DIM].mean()),
-            arm_mse_zero=float(zero[:, :ARM_DIM].mean()), arm_mse_const=float(const[:, :ARM_DIM].mean()),
+            pos_mse=float(pos_sq.mean()),
             mag_ratio=float(pmag[mv].mean() / (gmag[mv].mean() + 1e-9)),
             cos_dir=float(np.nanmean(np.sum(pd * gd, 1)[mv] / (pmag[mv] * gmag[mv] + 1e-9))),
         )
+        if full_sq:
+            full_sq = np.concatenate(full_sq); zero_sq = np.concatenate(zero_sq); const_sq = np.concatenate(const_sq)
+            out.update(arm_mse=float(full_sq[:, :ARM_DIM].mean()), hand_mse=float(full_sq[:, ARM_DIM:].mean()),
+                       arm_mse_zero=float(zero_sq[:, :ARM_DIM].mean()), arm_mse_const=float(const_sq[:, :ARM_DIM].mean()))
+        else:                                              # 6-dim model: rotation rep/hand not comparable
+            out.update(arm_mse=float("nan"), hand_mse=float("nan"), arm_mse_zero=float("nan"), arm_mse_const=float("nan"))
 
-        # --- receding-horizon open-loop rollout (free-run state, teacher-force images) ---
+        # --- receding-horizon open-loop rollout (free-run state, teacher-force images); position-only ---
         cur = (np.concatenate([f["observations/qpos_arm"][0], f["observations/qpos_hand"][0]])).astype(np.float32)
         gt_pos, roll_pos, roll_grip = [], [], []
         t = 0
@@ -109,12 +143,15 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=Fals
             else:
                 img, _ = load_frame(f, t)
                 pred = np.asarray(policy.infer(
-                    {"observation/image": img, "observation/state": cur, "prompt": prompt})["actions"])
-                cur = pred[k - 1].astype(np.float32)       # advance to end of chunk (absolute EE pose)
-            roll_pos.append(cur[:POS_DIM]); roll_grip.append(float(cur[ARM_DIM:].mean()))
+                    {"observation/image": img, "observation/state": make_state(cur, state_dim),
+                     "prompt": prompt})["actions"])
+                cur = pred[k - 1].astype(np.float32)       # advance to end of chunk (absolute EE pose, native dim)
+            roll_pos.append(cur[:POS_DIM])
+            if len(cur) >= ACTION_DIM:                     # hand dims present -> track gripper actuation
+                roll_grip.append(float(cur[ARM_DIM:].mean()))
             gt_pos.append(f["actions_arm"][min(t + k, total - 1)][:POS_DIM])
             t += k
-        roll_pos = np.stack(roll_pos); gt_pos = np.stack(gt_pos); roll_grip = np.asarray(roll_grip)
+        roll_pos = np.stack(roll_pos); gt_pos = np.stack(gt_pos)
         out["rollout_endpoint_err"] = float(np.linalg.norm(roll_pos[-1] - gt_pos[-1]))
         out["rollout_rmse"] = float(np.sqrt(((roll_pos - gt_pos) ** 2).sum(1).mean()))
 
@@ -133,12 +170,17 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=Fals
         out["ordered_success"] = float(reached_obj and reached_bowl and i_bowl >= i_obj)
         # gripper pattern: hand more actuated during transport (object->bowl) than before pickup,
         # normalized per-episode. Window means are robust vs single-point comparison.
-        gn = np.clip((roll_grip - np.percentile(roll_grip, 5)) /
-                     (np.percentile(roll_grip, 95) - np.percentile(roll_grip, 5) + 1e-9), 0.0, 1.0)
-        i0, i1 = min(i_obj, i_bowl), max(i_obj, i_bowl)
-        transport = float(gn[i0:i1 + 1].mean()) if i1 > i0 else float(gn[i_obj])
-        before = float(gn[:max(i_obj, 1)].mean())
-        out["gripper_ok"] = float(transport > before)   # GT expect ~1; if ~0 the hand sign is flipped
+        # Only meaningful for models with hand dims (24-dim); N/A for the 6-dim EE-only space.
+        if roll_grip:
+            roll_grip = np.asarray(roll_grip)
+            gn = np.clip((roll_grip - np.percentile(roll_grip, 5)) /
+                         (np.percentile(roll_grip, 95) - np.percentile(roll_grip, 5) + 1e-9), 0.0, 1.0)
+            i0, i1 = min(i_obj, i_bowl), max(i_obj, i_bowl)
+            transport = float(gn[i0:i1 + 1].mean()) if i1 > i0 else float(gn[i_obj])
+            before = float(gn[:max(i_obj, 1)].mean())
+            out["gripper_ok"] = float(transport > before)   # GT expect ~1; if ~0 the hand sign is flipped
+        else:
+            out["gripper_ok"] = float("nan")
     return out
 
 
@@ -154,6 +196,8 @@ def main(
     prompt: str = "put the object in the bowl",
     finetuned: bool = True,
     gt_check: bool = False,              # self-test: score GT actions (no policy) — expect ordered_success≈1
+    state_dim: int = ACTION_DIM,        # 24 = robot space; 6 = human/oic EE-only model (POSITION-only scoring)
+    norm_stats_dir: str | None = None,  # override norm-stats path (e.g. <ckpt>/assets/egoverse/oic_human)
     output_dir: str = "/cluster/scratch/lichin/pi0_test/ablation",
 ):
     cfg = _config.get_config(config_name)
@@ -171,8 +215,9 @@ def main(
             cfg = dataclasses.replace(cfg, model=dataclasses.replace(
                 cfg.model, paligemma_variant="gemma_2b", action_expert_variant="gemma_300m"))
         data_cfg = cfg.data.create(cfg.assets_dirs, cfg.model)
-        norm_stats = normalize.load(cfg.assets_dirs / data_cfg.repo_id)
-        print(f"[{condition}] {config_name} <- {checkpoint_dir}  (chunk_len={chunk_len})")
+        ns_path = pathlib.Path(norm_stats_dir) if norm_stats_dir else cfg.assets_dirs / data_cfg.repo_id
+        norm_stats = normalize.load(ns_path)
+        print(f"[{condition}] {config_name} <- {checkpoint_dir}  (chunk_len={chunk_len}, state_dim={state_dim})")
         policy = policy_config.create_trained_policy(cfg, checkpoint_dir, norm_stats=norm_stats, default_prompt=prompt)
 
     eps = [pathlib.Path(p) for p in episodes]
@@ -187,12 +232,13 @@ def main(
     per_ep = []
     for ep in eps:
         try:
-            m = eval_episode(policy, ep, frame_stride, chunk_len, prompt, gt_check=gt_check)
+            m = eval_episode(policy, ep, frame_stride, chunk_len, prompt, gt_check=gt_check, state_dim=state_dim)
             m["episode"] = ep.name
             per_ep.append(m)
+            grip = "-" if m["gripper_ok"] != m["gripper_ok"] else int(m["gripper_ok"])  # nan -> "-"
             print(f"  {ep.name}: cos={m['cos_dir']:.3f} "
                   f"reach_obj={m['reach_object_err']:.3f}m reach_bowl={m['reach_bowl_err']:.3f}m "
-                  f"success={int(m['ordered_success'])} grip_ok={int(m['gripper_ok'])}")
+                  f"success={int(m['ordered_success'])} grip_ok={grip}")
         except Exception as e:
             print(f"  {ep.name}: SKIP ({e})")
 
@@ -200,14 +246,14 @@ def main(
     keys = ["ordered_success", "reached_object", "reached_bowl", "reach_object_err", "reach_bowl_err",
             "gripper_ok", "cos_dir", "mag_ratio", "arm_mse", "arm_mse_const",
             "rollout_endpoint_err", "rollout_rmse", "pos_mse", "hand_mse", "arm_mse_zero"]
-    summary = {k: float(np.mean([m[k] for m in per_ep])) for k in keys}
+    summary = {k: float(np.nanmean([m[k] for m in per_ep])) for k in keys}  # nanmean: skip N/A (6-dim) metrics
     summary["n_episodes"] = len(per_ep)
     print(f"\n[{condition}] SUMMARY: " + "  ".join(f"{k}={summary[k]:.4f}" for k in keys))
 
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
     out = pathlib.Path(output_dir) / f"{condition}.json"
     json.dump({"condition": condition, "config": config_name, "checkpoint": checkpoint_dir,
-               "summary": summary, "per_episode": per_ep}, open(out, "w"), indent=2)
+               "state_dim": state_dim, "summary": summary, "per_episode": per_ep}, open(out, "w"), indent=2)
     print(f"[{condition}] wrote {out}")
 
 
