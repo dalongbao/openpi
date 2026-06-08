@@ -23,14 +23,19 @@ from pxr import UsdGeom, UsdLux, UsdShade, Gf, Sdf
 TABLE_TOP_Z    = 1.807
 TEX_DIR        = "/workspace"          # where generated texture PNGs are written
 WOOD_TILES     = 2.5                   # larger plywood grain (was 6 -> too busy/orange)
-BACKDROP_TILES = 1.0                   # backdrop maps ONCE (solid bands; must not repeat)
 DOME_INTENSITY = 800.0                # neutral daylight; lower so the plywood isn't washed white
 KEY_INTENSITY  = 1000.0
 KEY_ROT_XYZ    = (-50.0, 0.0, -35.0)
 BALL_RADIUS    = 0.055                 # bigger than the eval default (0.04) -> easier to see
 ROOM_HALF      = 4.0                   # floor extends +/- this (m) around the workspace
-WALL_DIST      = 1.6                   # backdrop walls this far from workspace centre (closer = fills more)
+WALL_DIST      = 2.5                   # walls this far from centre (floor shows between table and wall)
 WALL_HEIGHT    = 3.0
+# Plywood tabletop: a long, narrow rectangle sitting on the floor (matches the real sheet).
+TABLE_HALF_X   = 0.75                  # half-WIDTH  (left-right, narrow)
+TABLE_HALF_Y   = 1.50                  # half-LENGTH (depth, long)
+FLOOR_DROP     = 0.30                  # room floor this far below the tabletop
+FLOOR_RGB      = (0.224, 0.204, 0.267) # dark purplish floor, RGB(57,52,68)
+WALL_RGB       = (0.149, 0.318, 0.412) # greenish-gray wall, RGB(38,81,105)
 
 
 # ---------------------------------------------------------------- procedural textures
@@ -101,16 +106,26 @@ def _textured_quad(stage, path, corners, tex_png, st_max):
     return mesh
 
 
+def _solid_quad(stage, path, corners, rgb):
+    mesh = UsdGeom.Mesh.Define(stage, path)
+    mesh.CreatePointsAttr([Gf.Vec3f(*c) for c in corners])
+    mesh.CreateFaceVertexCountsAttr([4]); mesh.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+    mesh.CreateDoubleSidedAttr(True)
+    mesh.CreateDisplayColorAttr([Gf.Vec3f(*rgb)])
+    return mesh
+
+
 def apply_fidelity(stage, root="/World/Fidelity",
                    table_path="/World/SM_HeavyDutyPackingTable_C02_01",
                    object_path="/World/object"):
-    wood_png     = os.path.join(TEX_DIR, "tex_wood.png")
-    backdrop_png = os.path.join(TEX_DIR, "tex_backdrop.png")
-    ball_png     = os.path.join(TEX_DIR, "tex_ball.png")
-    _wood_png(wood_png); _backdrop_png(backdrop_png); _ball_png(ball_png)
+    wood_png = os.path.join(TEX_DIR, "tex_wood.png")
+    ball_png = os.path.join(TEX_DIR, "tex_ball.png")
+    _wood_png(wood_png); _ball_png(ball_png)
 
     cx, cy, z = 0.8, 0.0, TABLE_TOP_Z
     R, H = ROOM_HALF, WALL_HEIGHT
+    fz = z - FLOOR_DROP                 # room-floor height (below the tabletop)
+    tx, ty, W = TABLE_HALF_X, TABLE_HALF_Y, WALL_DIST
 
     # 1) Lights.
     dome = UsdLux.DomeLight.Define(stage, root + "/DomeLight")
@@ -119,31 +134,33 @@ def apply_fidelity(stage, root="/World/Fidelity",
     key.CreateIntensityAttr(KEY_INTENSITY); key.CreateAngleAttr(1.0)
     UsdGeom.Xformable(key).AddRotateXYZOp().Set(Gf.Vec3f(*KEY_ROT_XYZ))
 
-    # 2) Wood floor — large, at table-top height, so the background reads as table/floor.
+    # 2) Room floor — large horizontal reddish-purple plane, below the tabletop.
+    _solid_quad(stage, root + "/RoomFloor",
+                [(cx - R, cy - R, fz), (cx + R, cy - R, fz),
+                 (cx + R, cy + R, fz), (cx - R, cy + R, fz)], FLOOR_RGB)
+
+    # 3) Plywood tabletop — long+narrow rectangle on the floor (objects sit on this).
     _textured_quad(stage, root + "/Floor",
-                   [(cx - R, cy - R, z - 0.01), (cx + R, cy - R, z - 0.01),
-                    (cx + R, cy + R, z - 0.01), (cx - R, cy + R, z - 0.01)],
+                   [(cx - tx, cy - ty, z), (cx + tx, cy - ty, z),
+                    (cx + tx, cy + ty, z), (cx - tx, cy + ty, z)],
                    wood_png, WOOD_TILES)
 
-    # 3) Backdrop walls — back (+X) and side (+Y), brought close (WALL_DIST) so they fill the
-    #    camera background: reddish floor-tile band low, teal wall strip on top.
-    W = WALL_DIST
-    _textured_quad(stage, root + "/BackWall",
-                   [(cx + W, cy - R, z), (cx + W, cy + R, z),
-                    (cx + W, cy + R, z + H), (cx + W, cy - R, z + H)],
-                   backdrop_png, BACKDROP_TILES)
-    _textured_quad(stage, root + "/SideWall",
-                   [(cx - R, cy + W, z), (cx + R, cy + W, z),
-                    (cx + R, cy + W, z + H), (cx - R, cy + W, z + H)],
-                   backdrop_png, BACKDROP_TILES)
+    # 4) Walls — solid greenish-gray, back (+X) and side (+Y), from the floor up.
+    _solid_quad(stage, root + "/BackWall",
+                [(cx + W, cy - R, fz), (cx + W, cy + R, fz),
+                 (cx + W, cy + R, fz + H), (cx + W, cy - R, fz + H)], WALL_RGB)
+    _solid_quad(stage, root + "/SideWall",
+                [(cx - R, cy + W, fz), (cx + R, cy + W, fz),
+                 (cx + R, cy + W, fz + H), (cx - R, cy + W, fz + H)], WALL_RGB)
 
-    # 4) Wood material on the actual table too (over its broken offline material).
+    # 5) Recolour the real table mesh to plywood (so it blends under the tabletop quad
+    #    instead of showing its broken offline material).
     tprim = stage.GetPrimAtPath(table_path)
     if tprim.IsValid():
         wmat = _textured_material(stage, table_path + "/FidelityWood", wood_png)
         UsdShade.MaterialBindingAPI.Apply(tprim).Bind(wmat, bindingStrength=UsdShade.Tokens.strongerThanDescendants)
 
-    # 5) Ball — only texture an IMPLICIT sphere (the eval's ball). A mesh ball (preview)
+    # 6) Ball — only texture an IMPLICIT sphere (the eval's ball). A mesh ball (preview)
     #    carries its own per-face 4-colour displayColor, so leave it untouched.
     bprim = stage.GetPrimAtPath(object_path)
     if bprim.IsValid() and bprim.IsA(UsdGeom.Sphere):
@@ -151,5 +168,5 @@ def apply_fidelity(stage, root="/World/Fidelity",
         bmat = _textured_material(stage, object_path + "/FidelityBall", ball_png, rough=0.5)
         UsdShade.MaterialBindingAPI.Apply(bprim).Bind(bmat, bindingStrength=UsdShade.Tokens.strongerThanDescendants)
 
-    print(f"[fidelity] applied: wood floor+table, brick walls, dome+key light, red/green ball "
-          f"(textures in {TEX_DIR})")
+    print(f"[fidelity] applied: reddish floor + long/narrow plywood tabletop + greenish walls, "
+          f"dome+key light (textures in {TEX_DIR})")

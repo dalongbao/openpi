@@ -97,7 +97,7 @@ def add_sphere(path, pos, r=0.055, nlon=24, nlat=12):
     UsdGeom.Xformable(m).AddTranslateOp().Set(Gf.Vec3d(*pos))
 
 
-def add_bowl(path, pos, Rb=0.10, Rt=0.18, H=0.13, wall=0.025, n=32):
+def add_bowl(path, pos, Rb=0.14, Rt=0.19, H=0.10, wall=0.025, n=32):
     pts = []
 
     def ring(r, z):
