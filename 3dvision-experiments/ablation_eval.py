@@ -36,6 +36,7 @@ from openpi.policies import policy_config
 from openpi.shared import normalize
 from openpi.training import config as _config
 
+R_ID_DIR = "/cluster/work/cvg/data/Egoverse/raw_timesynced_h5/object_in_bowl_processed_50hz"  # R-ID source
 ARM_DIM = 7        # EE pose [x,y,z, qx,qy,qz,qw]
 POS_DIM = 3        # [x,y,z] — direction metric uses this (rep/frame-agnostic)
 ACTION_DIM = 24    # 7 arm + 17 hand
@@ -66,7 +67,7 @@ def load_frame(f, idx):
     return np.asarray(img), state
 
 
-def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt):
+def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=False):
     out = {}
     with h5py.File(h5_path, "r") as f:
         total = f["observations/qpos_arm"].shape[0]
@@ -75,9 +76,13 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt):
         for idx in ids:
             gt = np.concatenate([f["actions_arm"][idx:idx + chunk_len],
                                  f["actions_hand"][idx:idx + chunk_len]], axis=1)  # (chunk,24)
-            img, state = load_frame(f, idx)
-            pred = np.asarray(policy.infer(
-                {"observation/image": img, "observation/state": state, "prompt": prompt})["actions"])[:chunk_len]
+            state = np.concatenate([f["observations/qpos_arm"][idx], f["observations/qpos_hand"][idx]]).astype(np.float32)
+            if gt_check:
+                pred = gt                                  # self-test: GT is the "prediction"
+            else:
+                img, _ = load_frame(f, idx)
+                pred = np.asarray(policy.infer(
+                    {"observation/image": img, "observation/state": state, "prompt": prompt})["actions"])[:chunk_len]
             pi0.append((pred - gt) ** 2); zero.append(gt ** 2); const.append((state[None] - gt) ** 2)
             gd.append(gt[-1, :POS_DIM] - state[:POS_DIM]); pd.append(pred[-1, :POS_DIM] - state[:POS_DIM])
 
@@ -98,11 +103,14 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt):
         gt_pos, roll_pos, roll_grip = [], [], []
         t = 0
         while t < total - 1:
-            img, _ = load_frame(f, t)
-            pred = np.asarray(policy.infer(
-                {"observation/image": img, "observation/state": cur, "prompt": prompt})["actions"])
             k = min(chunk_len, total - 1 - t)
-            cur = pred[k - 1].astype(np.float32)           # advance to end of chunk (absolute EE pose)
+            if gt_check:
+                cur = np.concatenate([f["actions_arm"][t + k - 1], f["actions_hand"][t + k - 1]]).astype(np.float32)
+            else:
+                img, _ = load_frame(f, t)
+                pred = np.asarray(policy.infer(
+                    {"observation/image": img, "observation/state": cur, "prompt": prompt})["actions"])
+                cur = pred[k - 1].astype(np.float32)       # advance to end of chunk (absolute EE pose)
             roll_pos.append(cur[:POS_DIM]); roll_grip.append(float(cur[ARM_DIM:].mean()))
             gt_pos.append(f["actions_arm"][min(t + k, total - 1)][:POS_DIM])
             t += k
@@ -130,26 +138,36 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt):
 
 def main(
     *,
-    condition: str,
-    checkpoint_dir: str,
+    condition: str = "",
+    checkpoint_dir: str = "",
     config_name: str = "pi05_egoverse",
-    episodes_dir: str | None = None,
+    episodes_dir: str | None = R_ID_DIR,   # default R-ID source; restrict with --held-out-file
     episodes: list[str] = [],            # explicit held-out h5 paths (overrides episodes_dir glob)
     held_out_file: str | None = None,    # text file of h5 basenames to include from episodes_dir
     frame_stride: int = 10,
     prompt: str = "put the object in the bowl",
     finetuned: bool = True,
+    gt_check: bool = False,              # self-test: score GT actions (no policy) — expect ordered_success≈1
     output_dir: str = "/cluster/scratch/lichin/pi0_test/ablation",
 ):
     cfg = _config.get_config(config_name)
-    if not finetuned:  # base weights: swap LoRA->plain gemma (see run_inference.py)
-        cfg = dataclasses.replace(cfg, model=dataclasses.replace(
-            cfg.model, paligemma_variant="gemma_2b", action_expert_variant="gemma_300m"))
-    data_cfg = cfg.data.create(cfg.assets_dirs, cfg.model)
-    norm_stats = normalize.load(cfg.assets_dirs / data_cfg.repo_id)
     chunk_len = cfg.model.action_horizon
-    print(f"[{condition}] {config_name} <- {checkpoint_dir}  (chunk_len={chunk_len})")
-    policy = policy_config.create_trained_policy(cfg, checkpoint_dir, norm_stats=norm_stats, default_prompt=prompt)
+    if gt_check:
+        condition = condition or "GT_check"
+        policy = None
+        print(f"[{condition}] GROUND-TRUTH self-test (no policy, chunk_len={chunk_len}) — expect "
+              f"ordered_success≈1, reach errors≈0; use it to calibrate SUCCESS_THRESH={SUCCESS_THRESH}")
+    else:
+        if not checkpoint_dir:
+            raise ValueError("pass --checkpoint-dir (or use --gt-check for the self-test)")
+        condition = condition or "unnamed"
+        if not finetuned:  # base weights: swap LoRA->plain gemma (see run_inference.py)
+            cfg = dataclasses.replace(cfg, model=dataclasses.replace(
+                cfg.model, paligemma_variant="gemma_2b", action_expert_variant="gemma_300m"))
+        data_cfg = cfg.data.create(cfg.assets_dirs, cfg.model)
+        norm_stats = normalize.load(cfg.assets_dirs / data_cfg.repo_id)
+        print(f"[{condition}] {config_name} <- {checkpoint_dir}  (chunk_len={chunk_len})")
+        policy = policy_config.create_trained_policy(cfg, checkpoint_dir, norm_stats=norm_stats, default_prompt=prompt)
 
     eps = [pathlib.Path(p) for p in episodes]
     if not eps and episodes_dir:
@@ -163,7 +181,7 @@ def main(
     per_ep = []
     for ep in eps:
         try:
-            m = eval_episode(policy, ep, frame_stride, chunk_len, prompt)
+            m = eval_episode(policy, ep, frame_stride, chunk_len, prompt, gt_check=gt_check)
             m["episode"] = ep.name
             per_ep.append(m)
             print(f"  {ep.name}: cos={m['cos_dir']:.3f} "
