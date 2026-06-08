@@ -286,6 +286,14 @@ if os.environ.get("SCENE_FIDELITY", "0").lower() in ("1", "true", "yes", "y"):
     import scene_fidelity
     scene_fidelity.apply_fidelity(_stage)
 
+# Optional egocentric camera (+ arm-hiding), matching the training view; overrides the
+# ExternalCamera placed above. Enable with EGOCENTRIC=1 (this is robot data, so leave the
+# arm visible — only set EGO_HIDE_ARM=1 for the human-hand models).
+if os.environ.get("EGOCENTRIC", "0").lower() in ("1", "true", "yes", "y"):
+    sys.path.insert(0, "/workspace")
+    import ego_view
+    ego_view.apply_egocentric(_stage, hide_arm=os.environ.get("EGO_HIDE_ARM", "0").lower() in ("1", "true", "yes", "y"))
+
 # Data is 50 Hz; step physics at 1/50 s so the policy runs at its training control rate
 # (Isaac default is 1/60, which would desync observation/action cadence from training).
 world = World(stage_units_in_meters=1.0, physics_dt=1.0 / 50.0, rendering_dt=1.0 / 50.0)
