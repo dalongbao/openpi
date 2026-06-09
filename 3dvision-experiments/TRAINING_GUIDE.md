@@ -69,6 +69,18 @@ cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} \
 ```
 Checkpoints → your own `/cluster/scratch/$USER/checkpoints/<CONFIG>/<EXP_NAME>/`.
 
+> **Shorter queue — cast a wider net by GPU memory.** The 40 GB A100s are scarce (3 nodes). Instead
+> of pinning `--gpus=a100:1`, request *any* card with enough VRAM to hold batch-32 LoRA and take
+> whichever frees first:
+> ```bash
+> ... --gpus=1 --gres=gpumem:40g ...   # matches a100 (40), a100_80gb (80), pro_6000 (96)
+> ```
+> Keeps batch-32 unchanged (no ablation confound), unlike a 24 GB RTX 4090 which OOMs at batch-32.
+> ⚠️ If it lands on a **pro_6000** (new Blackwell card — *faster*, not slower, but unverified with
+> openpi's pinned JAX/CUDA): watch the first minute of the log. If JAX errors at CUDA init,
+> `scancel` and resubmit with `--gpus=a100_80gb:1` (5 nodes, also short queue). If Euler rejects the
+> `--gres=gpumem` syntax, `--gpus=a100_80gb:1` is the safe fallback.
+
 **(c) Monitor + report:**
 ```bash
 squeue -u $USER && tail -f ~/openpi/slurm-<jobid>.out     # loss should print and drop after JIT
