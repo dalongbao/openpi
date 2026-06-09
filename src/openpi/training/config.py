@@ -91,6 +91,10 @@ class DataConfig:
     # If true, will use the LeRobot dataset task to define the prompt.
     prompt_from_task: bool = False
 
+    # Optional subset of LeRobot episode indices to train on (None = all). Used for the
+    # data-efficiency sweep (train on N robot episodes + optionally all human episodes).
+    episodes: list[int] | None = None
+
     # Only used for RLDS data loader (ie currently only used for DROID).
     rlds_data_dir: str | None = None
     # Action space for DROID dataset.
@@ -1251,6 +1255,47 @@ _CONFIGS = [
     *roboarena_config.get_roboarena_configs(),
     *polaris_config.get_polaris_configs(),
 ]
+
+
+# --- Data-efficiency sweep: per-N R-ID-only + R-ID+H-ID configs (config-level episode subset) ---
+# Robot subset indices = nested stratified picks over the 64 conversion-order R-ID training episodes
+# (from 3dvision-experiments/object_labels.csv minus held_out_rid.txt). RECOMPUTE if you relabel n/dk.
+_RID_SUBSETS = {
+    5: [0, 17, 23, 39, 44],
+    15: [0, 1, 10, 11, 17, 18, 23, 24, 28, 34, 39, 41, 44, 45, 50],
+    30: [0, 1, 2, 10, 11, 12, 17, 18, 19, 20, 23, 24, 25, 26, 28, 29, 30, 34, 35, 36, 39, 41, 42, 44, 45, 46, 47, 50, 51, 52],
+}
+_MIX_HUMAN = list(range(64, 2601))  # oic_mix: robot episode_index 0-63, human 64-2600 (verify total after build)
+
+
+def _ego_subset_train_config(name: str, data: DataConfigFactory) -> TrainConfig:
+    """An egoverse LoRA train config (same hyperparams as pi05_egoverse) with a custom data config."""
+    return TrainConfig(
+        name=name,
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False,
+                                   paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"),
+        data=data,
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=5e-5, decay_steps=1_000_000, decay_lr=5e-5),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
+        freeze_filter=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora",
+                                           action_expert_variant="gemma_300m_lora").get_freeze_filter(),
+        save_interval=5_000, keep_period=30_000, num_train_steps=30_000,
+    )
+
+
+for _n, _idx in _RID_SUBSETS.items():
+    _CONFIGS.append(_ego_subset_train_config(
+        f"pi05_egoverse_n{_n}",
+        LeRobotEgoverseDataConfig(repo_id="egoverse/all",
+                                  base_config=DataConfig(prompt_from_task=True, episodes=list(_idx)))))
+    _CONFIGS.append(_ego_subset_train_config(
+        f"pi05_ego_mix_oic_n{_n}",
+        LeRobotEgoverseUnifiedDataConfig(repo_id="egoverse/oic_mix",
+                                         base_config=DataConfig(prompt_from_task=True, episodes=list(_idx) + _MIX_HUMAN))))
+
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
     raise ValueError("Config names must be unique.")
