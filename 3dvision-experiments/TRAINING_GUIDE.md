@@ -9,6 +9,10 @@ the data-efficiency curve.
 Each person is capped at **2 GPUs**, so coordinate. **Priority = the `*_n64` configs + `hid_only`
 first** (that's the go/no-go); the smaller `_n5/_n15/_n30` points fill the curve after.
 
+> **⚠️ `git pull` before every run.** The repo carries (a) the mix weighted-sampler — an earlier version
+> crashed *every* `mix_n*` job at startup, now fixed — and (b) the **canonical norm stats** you must copy
+> (see §2a). An out-of-date checkout will crash or silently use the wrong normalizer.
+
 ---
 
 ## 1. One-time setup (do once on Euler)
@@ -50,13 +54,30 @@ UV_FROZEN=1 uv run python -c "from openpi.shared import download; download.maybe
 
 For each config you train:
 
-**(a) Norm stats** — login node, once per config (~20–30 min):
+**(a) Norm stats — for the per-N curves, COPY lichin's, do NOT recompute.**
+
+Normalization must be **identical across every point on a curve** (n5/n15/n30/n64), or you confound
+*data quantity* with a *shifting normalizer* — `compute_norm_stats` applies the `episodes=` filter, so
+a per-N run would produce different stats over its own subset. The canonical full-N stats are committed
+to the repo (own them: `pi05_egoverse` = rid curve, `pi05_ego_mix_oic` = mix curve). After `git pull`,
+**copy them into your per-N config dir** (one-liners cover all three N at once):
+
+```bash
+# rid curve (pi05_egoverse_n5/n15/n30):
+cd ~/openpi && for n in n5 n15 n30; do mkdir -p assets/pi05_egoverse_$n/egoverse/all && cp assets/pi05_egoverse/egoverse/all/norm_stats.json assets/pi05_egoverse_$n/egoverse/all/; done
+# mix curve (pi05_ego_mix_oic_n5/n15/n30):
+cd ~/openpi && for n in n5 n15 n30; do mkdir -p assets/pi05_ego_mix_oic_$n/egoverse/oic_mix && cp assets/pi05_ego_mix_oic/egoverse/oic_mix/norm_stats.json assets/pi05_ego_mix_oic_$n/egoverse/oic_mix/; done
+```
+
+**Only compute fresh stats** if you own a *standalone* config that isn't part of a per-N curve (e.g.
+`pi05_ego_human_oic`) — claim it in the sheet first, and never recompute `pi05_egoverse` /
+`pi05_ego_mix_oic` (lichin owns those; recomputing them desyncs everyone who copied):
 ```bash
 cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} \
   HF_LEROBOT_HOME=$DATA_HOME HF_HOME=/cluster/scratch/$USER/hf_cache HF_DATASETS_CACHE=/cluster/scratch/$USER/hf_cache/datasets \
   UV_FROZEN=1 uv run python scripts/compute_norm_stats.py --config-name <CONFIG> --max_frames 20000
 ```
-> **Two must-dos:**
+> **Two must-dos** (standalone-compute case):
 > - Set `HF_HOME`/`HF_DATASETS_CACHE` to **scratch** — else the dataset cache regen overflows home (50 GB) → `Disk quota exceeded`.
 > - Pass **`--max_frames 20000`** — without it the script decodes *every* image of the full dataset
 >   (~8 h for `egoverse/all`!); a 20k-frame subsample gives identical 24-dim stats in ~20–30 min.
@@ -114,11 +135,17 @@ huggingface-cli upload --repo-type model --private <HF_MODEL_ORG>/<CONFIG> \
 
 `base` (untrained floor) needs **no training** — it's eval-only (`ablation_eval.py --finetuned false`).
 
-**Example** — to train MIX n15:
+**Example** — to train MIX n15 (copy lichin's norm stats, then submit):
 ```bash
-cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} HF_LEROBOT_HOME=$DATA_HOME HF_HOME=/cluster/scratch/$USER/hf_cache HF_DATASETS_CACHE=/cluster/scratch/$USER/hf_cache/datasets UV_FROZEN=1 uv run python scripts/compute_norm_stats.py --config-name pi05_ego_mix_oic_n15 --max_frames 20000
+cd ~/openpi && git pull && mkdir -p assets/pi05_ego_mix_oic_n15/egoverse/oic_mix && cp assets/pi05_ego_mix_oic/egoverse/oic_mix/norm_stats.json assets/pi05_ego_mix_oic_n15/egoverse/oic_mix/
 cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} sbatch --partition=gpu.24h --time=24:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1 3dvision-experiments/run_train_shared.slurm pi05_ego_mix_oic_n15 mix15 42
 ```
+
+> **The `mix_n5/n15/n30` configs auto-balance robot:human to 50:50** via a weighted sampler (without it,
+> small-N mixes are only ~9 / 23 / 37 % robot by frames → the robot/grasp signal gets drowned). Nothing
+> to set — it's wired into the config. **Confirm it's active** in your training log near the start:
+> `mix sampler [action_mask ...]: target robot fraction 0.50 over <N> robot / <M> human frames`.
+> (`mix64` and all `rid` configs are intentionally unweighted — no such line, that's correct.)
 
 ---
 
@@ -149,4 +176,5 @@ plant; this hits `rid_n5` and `mix_n5` equally, so their *comparison* stays fair
 - **A100 required** (LoRA batch-32 OOMs on smaller GPUs).
 - All `uv run` need `UV_FROZEN=1`; compute-node jobs also need `UV_OFFLINE=1` (the slurm sets it).
 - Don't touch `held_out_rid.txt` / the subset indices — they define the eval; changing them invalidates comparisons.
+- **Norm stats: copy lichin's full-N stats into your per-N config dir (§2a); never recompute per-N.** A per-subset normalizer confounds the curve. Don't recompute `pi05_egoverse` / `pi05_ego_mix_oic`.
 - Eval is run centrally on the 12 held-out (raw h5, no conversion) once checkpoints are on HF.
