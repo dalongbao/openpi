@@ -13,6 +13,7 @@ Run on the cluster (login node is fine; this only reads the cached Arrow dataset
 """
 
 import collections
+import dataclasses
 import pathlib
 import sys
 
@@ -76,6 +77,41 @@ def main(config_name: str, expected_robot: list[int] | None = None):
               f"(robot {sum(1 for e in drawn_eps if e < 64)}, human {sum(1 for e in drawn_eps if e >= 64)})")
     else:
         print("[4/4] robot_sampling_fraction=None -> plain shuffle (no sampler). (Expected for n64 / rid.)")
+
+    full_loader_check(cfg, batches=120)
+
+
+def full_loader_check(cfg, batches: int = 120):
+    """[5/5] End-to-end integration: build the REAL training data loader (the exact
+    create_data_loader -> create_torch_data_loader -> TorchDataLoader -> torch.DataLoader(sampler=...)
+    path that scripts/train.py uses) and measure the robot fraction over actual training batches.
+    Uses skip_norm_stats=True so it needs no norm_stats.json and runs on a login node (no GPU).
+    Reads robot/human from obs.action_loss_mask (robot supervises all dims, human masks the hand)."""
+    print(f"\n[5/5] building the REAL training data loader (skip_norm_stats, {batches} batches)...")
+    cfg = dataclasses.replace(cfg, num_workers=0)  # main-process load: no spawn, deterministic, simpler
+    loader = DL.create_data_loader(
+        cfg, sharding=None, shuffle=True, num_batches=batches, skip_norm_stats=True, framework="jax"
+    )
+    sums = []
+    n_batches = 0
+    for obs, _actions in loader:
+        if obs.action_loss_mask is None:
+            print("[5/5] FAIL: obs.action_loss_mask is None — the mask did not survive the real pipeline.")
+            return
+        m = np.asarray(obs.action_loss_mask)
+        sums.append(m.reshape(m.shape[0], -1).sum(axis=1))
+        n_batches += 1
+    sums = np.concatenate(sums)
+    is_robot = sums >= sums.max()  # the fully-supervised frames are robot (data-driven, no magic constant)
+    realized = float(is_robot.mean())
+    target = cfg.data.create(pathlib.Path("assets"), cfg.model).robot_sampling_fraction
+    print(f"[5/5] pulled {n_batches} real batches ({len(sums)} frames) via create_data_loader")
+    print(f"      mask-sum values seen: {np.unique(sums).tolist()}")
+    print(f"      realized robot fraction = {realized:.3f}  "
+          f"(target {target if target is not None else 'natural ~0.08-0.56 = plain shuffle'})")
+    if target is not None:
+        verdict = "PASS" if abs(realized - target) < 0.05 else "CHECK (off by >0.05; small-batch noise? raise batches)"
+        print(f"      end-to-end sampler wiring: {verdict}")
 
 
 if __name__ == "__main__":
