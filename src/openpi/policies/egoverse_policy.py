@@ -166,3 +166,53 @@ class EgoverseSingleArmInputs(transforms.DataTransformFn):
 class EgoverseSingleArmOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         return {"actions": np.asarray(data["actions"][:, :SINGLE_ARM_ACTION_DIM])}
+
+
+# --- Unified cross-embodiment mix (R-ID robot 24D + H-ID human 6D->24D) ---
+#
+# State and actions are expected ALREADY in the unified 24D canonical space — the build-time
+# converter does the euler->quat + base->canonical remap + 24D placement via
+# `openpi.policies.egoverse_unify` (see to_unified / human6d_to_arm7 / robot_arm7_base_to_canonical).
+# This transform's only extra job over EgoverseInputs is to forward the per-dim LOSS MASK so
+# human samples don't supervise the 17 hand dims. The mask rides on the dataset as `action_mask`
+# (24D, written by the converter); absent -> supervise all dims (pure-robot fallback).
+
+
+@dataclasses.dataclass(frozen=True)
+class EgoverseUnifiedInputs(transforms.DataTransformFn):
+    model_type: _model.ModelType
+
+    def __call__(self, data: dict) -> dict:
+        base_image = _parse_image(data["observation/image"])
+
+        inputs = {
+            "state": data["observation/state"],
+            "image": {
+                "base_0_rgb": base_image,
+                "left_wrist_0_rgb": np.zeros_like(base_image),
+                "right_wrist_0_rgb": np.zeros_like(base_image),
+            },
+            "image_mask": {
+                "base_0_rgb": np.True_,
+                "left_wrist_0_rgb": np.False_,
+                "right_wrist_0_rgb": np.False_,
+            },
+        }
+
+        if "actions" in data:
+            inputs["actions"] = data["actions"]
+
+        # per-dim loss mask: forward to the model so human samples skip the 17 hand dims.
+        if "action_mask" in data:
+            inputs["action_loss_mask"] = np.asarray(data["action_mask"], dtype=np.float32)
+
+        if "prompt" in data:
+            inputs["prompt"] = data["prompt"]
+
+        return inputs
+
+
+@dataclasses.dataclass(frozen=True)
+class EgoverseUnifiedOutputs(transforms.DataTransformFn):
+    def __call__(self, data: dict) -> dict:
+        return {"actions": np.asarray(data["actions"][:, :ACTION_DIM])}

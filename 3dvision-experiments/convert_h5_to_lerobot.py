@@ -15,7 +15,7 @@ from tqdm import tqdm
 import tyro
 
 REPO_NAME = "egoverse/all"
-MAX_FRAMES = 5000  # skip episodes longer than this to avoid OOM
+MAX_FRAMES = 10000  # skip episodes longer than this to avoid OOM (object_in_bowl max ~9001 frames)
 
 EXPECTED_KEYS = [
     "observations/images/aria_rgb_cam/color",
@@ -26,7 +26,13 @@ EXPECTED_KEYS = [
 ]
 
 
-def main(data_dir: str, *, max_episodes: int | None = None, task: str = "put the object in the bowl"):
+def main(
+    data_dir: str,
+    *,
+    max_episodes: int | None = None,
+    held_out_file: str | None = None,  # text file of h5 basenames to EXCLUDE (the eval set)
+    task: str = "put the object in the bowl",
+):
     output_path = HF_LEROBOT_HOME / REPO_NAME
     if output_path.exists():
         shutil.rmtree(output_path)
@@ -61,10 +67,17 @@ def main(data_dir: str, *, max_episodes: int | None = None, task: str = "put the
     if max_episodes is not None:
         h5_files = h5_files[:max_episodes]
 
+    held = set(l.strip() for l in open(held_out_file)) if held_out_file else set()
+    if held:
+        print(f"Excluding {len(held)} held-out episodes")
+
     print(f"Converting {len(h5_files)} episodes...")
     converted = 0
 
     for h5_path in tqdm(h5_files):
+        if h5_path.name in held:
+            print(f"\n  Skipping {h5_path.name}: held-out")
+            continue
         with h5py.File(h5_path, "r") as f:
             # Skip files with wrong structure.
             if any(key not in f for key in EXPECTED_KEYS):

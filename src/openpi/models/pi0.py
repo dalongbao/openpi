@@ -211,7 +211,16 @@ class Pi0(_model.BaseModel):
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-        return jnp.mean(jnp.square(v_t - u_t), axis=-1)
+        per_dim = jnp.square(v_t - u_t)  # (*b, ah, ad)
+        mask = observation.action_loss_mask
+        if mask is None:
+            return jnp.mean(per_dim, axis=-1)
+        # (*b, ad) -> broadcast over the horizon; right-pad with ones to the model action dim.
+        mask = mask[..., None, :]
+        pad = per_dim.shape[-1] - mask.shape[-1]
+        if pad > 0:
+            mask = jnp.concatenate([mask, jnp.ones((*mask.shape[:-1], pad), dtype=mask.dtype)], axis=-1)
+        return jnp.sum(per_dim * mask, axis=-1) / jnp.clip(jnp.sum(mask, axis=-1), 1e-6)
 
     @override
     def sample_actions(
