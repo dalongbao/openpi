@@ -95,6 +95,16 @@ class DataConfig:
     # data-efficiency sweep (train on N robot episodes + optionally all human episodes).
     episodes: list[int] | None = None
 
+    # Mix sampling ratio. If set, frames are drawn (with replacement, via a WeightedRandomSampler)
+    # so that on average this fraction come from "robot" episodes (episode_index < robot_episode_threshold)
+    # and the rest from human episodes, regardless of their very different natural frame counts. This
+    # keeps the robot:human balance fixed across the small-N mixes (which otherwise dilute robot to
+    # ~9-37%). None = natural frame ratio (no reweighting). Only used by the JAX (torch-backed) loader.
+    robot_sampling_fraction: float | None = None
+    # Episode-index boundary separating robot (idx < threshold) from human (idx >= threshold) frames.
+    # For egoverse/oic_mix the first 64 episodes are robot. Only read when robot_sampling_fraction is set.
+    robot_episode_threshold: int = 64
+
     # Only used for RLDS data loader (ie currently only used for DROID).
     rlds_data_dir: str | None = None
     # Action space for DROID dataset.
@@ -1291,10 +1301,15 @@ for _n, _idx in _RID_SUBSETS.items():
         f"pi05_egoverse_n{_n}",
         LeRobotEgoverseDataConfig(repo_id="egoverse/all",
                                   base_config=DataConfig(prompt_from_task=True, episodes=list(_idx)))))
+    # Small-N mixes dilute robot to ~9-37% by frames; pin a fixed 50:50 robot:human draw so the
+    # only thing varying across the data-efficiency curve is N robot episodes (not robot's sampling
+    # weight). At N64 the natural ratio is already ~56% robot, so pi05_ego_mix_oic is left unweighted.
     _CONFIGS.append(_ego_subset_train_config(
         f"pi05_ego_mix_oic_n{_n}",
         LeRobotEgoverseUnifiedDataConfig(repo_id="egoverse/oic_mix",
-                                         base_config=DataConfig(prompt_from_task=True, episodes=list(_idx) + _MIX_HUMAN))))
+                                         base_config=DataConfig(prompt_from_task=True,
+                                                                episodes=list(_idx) + _MIX_HUMAN,
+                                                                robot_sampling_fraction=0.5))))
 
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):

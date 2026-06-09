@@ -278,6 +278,60 @@ def create_data_loader(
     )
 
 
+def _make_mix_sampler(
+    dataset: Dataset, fraction: float, threshold: int, seed: int
+) -> torch.utils.data.Sampler | None:
+    """Build a WeightedRandomSampler that draws `fraction` of frames from robot episodes
+    (episode_index < threshold) and the rest from human episodes, regardless of their natural
+    frame counts. Returns None if only one source is present (then sampling is a no-op)."""
+    # Unwrap the TransformedDataset layer(s) down to the underlying LeRobotDataset.
+    inner = dataset
+    while not hasattr(inner, "hf_dataset") and hasattr(inner, "_dataset"):
+        inner = inner._dataset
+    if not hasattr(inner, "hf_dataset"):
+        raise ValueError("robot_sampling_fraction is set but the dataset is not a LeRobotDataset.")
+    hf = inner.hf_dataset
+
+    # Classify each frame as robot vs human. Prefer the per-frame action_mask (robot supervises all
+    # dims, human masks the hand dims): it is intrinsic to the sample, so it is immune to any episode
+    # re-indexing the `episodes=` filter might apply. Fall back to the episode_index boundary only if
+    # the mask is absent. Reading either column does not decode the embedded JPEGs, so it is cheap.
+    if "action_mask" in hf.column_names:
+        mask_sum = np.asarray(hf["action_mask"], dtype=np.float32).reshape(len(hf), -1).sum(axis=1)
+        uniq = np.unique(mask_sum)
+        is_robot = mask_sum >= uniq.max()  # the fully-supervised frames are the robot ones
+        basis = f"action_mask (robot sum={uniq.max():.0f}; sums present={uniq.tolist()})"
+    else:
+        episode_index = np.asarray(hf["episode_index"])
+        is_robot = episode_index < threshold
+        basis = f"episode_index < {threshold}"
+
+    n_robot = int(is_robot.sum())
+    n_human = int(len(is_robot) - n_robot)
+    if n_robot == 0 or n_human == 0:
+        logging.warning(
+            f"mix sampler: only one source present (robot={n_robot}, human={n_human} frames); "
+            "skipping reweighting (falling back to plain shuffle)."
+        )
+        return None
+
+    weights = np.empty(len(is_robot), dtype=np.float64)
+    weights[is_robot] = fraction / n_robot
+    weights[~is_robot] = (1.0 - fraction) / n_human
+    logging.info(
+        f"mix sampler [{basis}]: target robot fraction {fraction:.2f} "
+        f"over {n_robot} robot / {n_human} human frames"
+    )
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return torch.utils.data.WeightedRandomSampler(
+        weights=torch.as_tensor(weights, dtype=torch.double),
+        num_samples=len(episode_index),
+        replacement=True,
+        generator=generator,
+    )
+
+
 def create_torch_data_loader(
     data_config: _config.DataConfig,
     model_config: _model.BaseModelConfig,
@@ -330,6 +384,11 @@ def create_torch_data_loader(
             local_batch_size = batch_size
     else:
         local_batch_size = batch_size // jax.process_count()
+        # Fixed robot:human mix ratio (mix configs only); replaces plain shuffle with a weighted draw.
+        if data_config.robot_sampling_fraction is not None:
+            sampler = _make_mix_sampler(
+                dataset, data_config.robot_sampling_fraction, data_config.robot_episode_threshold, seed
+            )
 
     logging.info(f"local_batch_size: {local_batch_size}")
     data_loader = TorchDataLoader(
