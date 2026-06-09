@@ -268,6 +268,12 @@ try:
     print(f"[init] Home IK ok={home_ok}")
 
     print(f"[run] Starting oic eval for {NUM_STEPS} steps...")
+    # Reach tracking: ball in the Franka base frame + the closest the EE gets to it over the run.
+    from pxr import UsdGeom as _UGt, Gf as _Gft
+    _w2bt = _UGt.XformCache().GetLocalToWorldTransform(_stage.GetPrimAtPath("/World/fr3")).GetInverse()
+    _bbv = _w2bt.Transform(_Gft.Vec3d(*_ball_pos))
+    _BALL_BASE = np.array([_bbv[0], _bbv[1], _bbv[2]], np.float64)
+    _min_reach = float("inf"); _final_ee = None
     for step in range(NUM_STEPS):
         policy_img = get_frame(external_cam, POLICY_CAM_RES)   # armless (in-distribution)
         # 3rd-person recording: when the arm is hidden for the POLICY, temporarily show it so
@@ -283,6 +289,12 @@ try:
         joint_pos  = franka.get_joint_positions()
         if joint_pos is None:
             joint_pos = np.zeros(9, dtype=np.float32)
+        try:                                  # track closest EE->ball distance (base frame)
+            _ee_b = np.asarray(kin.kin.fk(joint_pos[:7])[:3], np.float64)
+            _final_ee = _ee_b
+            _min_reach = min(_min_reach, float(np.linalg.norm(_ee_b - _BALL_BASE)))
+        except Exception:
+            pass
 
         t0 = time.time()
         _requery = step < 200
@@ -325,5 +337,25 @@ except Exception as e:
 finally:
     print("[exit] Closing...")
     csv_file.close(); video_writer.release()
+    # Reach summary: ball vs the closest the arm got, appended to one CSV across all seed runs.
+    try:
+        _ae = np.round(_final_ee, 3).tolist() if _final_ee is not None else None
+        print(f"[track] seed={_ball_seed} ball_world={tuple(round(v, 3) for v in _ball_pos)} "
+              f"ball_base={np.round(_BALL_BASE, 3).tolist()} arm_ee_base={_ae} min_reach_m={_min_reach:.3f}")
+        import csv as _csvt
+        _summ = f"{RESULTS_DIR}/ball_tracking.csv"
+        _newf = not os.path.exists(_summ)
+        with open(_summ, "a", newline="") as _sf:
+            _w = _csvt.writer(_sf)
+            if _newf:
+                _w.writerow(["seed", "ball_wx", "ball_wy", "ball_bx", "ball_by",
+                             "arm_bx", "arm_by", "min_reach_m", "video"])
+            _w.writerow([_ball_seed, round(_ball_pos[0], 3), round(_ball_pos[1], 3),
+                         round(float(_BALL_BASE[0]), 3), round(float(_BALL_BASE[1]), 3),
+                         (_ae[0] if _ae else ""), (_ae[1] if _ae else ""),
+                         round(_min_reach, 3), os.path.basename(VIDEO_PATH)])
+        print(f"[track] appended -> {_summ}")
+    except Exception as _te:
+        print(f"[track] summary skipped: {_te}")
     print(f"[exit] Video saved to {VIDEO_PATH}")
     simulation_app.close(); print("[exit] Done.")
