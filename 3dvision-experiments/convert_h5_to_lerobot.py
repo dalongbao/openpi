@@ -31,12 +31,15 @@ def main(
     *,
     max_episodes: int | None = None,
     held_out_file: str | None = None,  # text file of h5 basenames to EXCLUDE (the eval set)
+    low_mem: bool = False,             # synchronous image writing -> bounded memory, cannot OOM (slower)
     task: str = "put the object in the bowl",
 ):
     output_path = HF_LEROBOT_HOME / REPO_NAME
     if output_path.exists():
         shutil.rmtree(output_path)
 
+    # low_mem: no async writer queue (the thing that grows unboundedly on big episodes -> OOM).
+    writer_threads, writer_procs = (0, 0) if low_mem else (2, 2)
     dataset = LeRobotDataset.create(
         repo_id=REPO_NAME,
         robot_type="franka",
@@ -58,8 +61,8 @@ def main(
                 "names": ["actions"],
             },
         },
-        image_writer_threads=2,
-        image_writer_processes=2,
+        image_writer_threads=writer_threads,
+        image_writer_processes=writer_procs,
     )
 
     from pathlib import Path
