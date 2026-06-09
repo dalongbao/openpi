@@ -268,7 +268,8 @@ try:
         # the OUTSIDE video shows the robot in motion, then hide it again for the policy renders.
         if _arm_hidden and ego_view is not None:
             ego_view.set_arm_visible(_stage, True)
-            world.render(); world.render()
+            for _ in range(4):                 # flush the render/annotator so the arm appears
+                world.render()
             hd_img = get_frame(recording_cam, HD_VIDEO_RES)
             ego_view.set_arm_visible(_stage, False)
         else:

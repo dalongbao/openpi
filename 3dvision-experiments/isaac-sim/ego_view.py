@@ -25,9 +25,9 @@ EGO_HFOV_DEG   = 95.0          # Aria is wide (~110 hardware); 95 is a reasonabl
 # RecordingCamera = the HD video camera (not the policy input). The USD ships a stale pose
 # that stares at empty sky, so we re-aim it at the workspace. A 3/4 SIDE view (front-left,
 # elevated) like the early eval videos, so you see the arm's profile reaching for the ball.
-REC_CAM_POS    = (-1.10, -1.30, 2.50)
-REC_CAM_TARGET = (0.80, -0.28, 1.80)
-REC_HFOV_DEG   = 55.0          # narrower than the policy cam -> a clean framed 3rd-person shot
+REC_CAM_POS    = (-2.00, -2.20, 2.90)   # pulled further back for a wider 3/4 side shot
+REC_CAM_TARGET = (0.80, -0.25, 1.80)
+REC_HFOV_DEG   = 70.0          # wider FoV so the whole robot + table + objects fit
 
 # Arm-hiding: drop the bulky base/shoulder/elbow links; keep wrist + hand + fingers so a
 # small end-effector still appears near the objects.
