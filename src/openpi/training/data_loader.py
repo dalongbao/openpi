@@ -155,6 +155,25 @@ def create_torch_dataset(
         },
     )
 
+    if data_config.episodes is not None:
+        # LeRobot sizes `episode_data_index` to the loaded subset but keeps the ORIGINAL (global)
+        # `episode_index` values in the data. With delta_timestamps (action chunking), __getitem__
+        # indexes episode_data_index by that global index -> IndexError on any non-contiguous subset
+        # (i.e. every per-N data-efficiency config). Rebuild episode_data_index as global-indexed
+        # from/to frame offsets, derived from the episode_index column (each episode is one contiguous
+        # block of frames, so its range is [first occurrence, last occurrence + 1)).
+        episode_index = np.asarray(dataset.hf_dataset["episode_index"])
+        n_frames = len(episode_index)
+        starts = np.concatenate([[0], np.flatnonzero(np.diff(episode_index) != 0) + 1])
+        ends = np.concatenate([starts[1:], [n_frames]])
+        block_eps = torch.as_tensor(episode_index[starts], dtype=torch.long)  # global ep idx per block
+        size = int(episode_index.max()) + 1
+        new_from = torch.zeros(size, dtype=torch.long)
+        new_to = torch.zeros(size, dtype=torch.long)
+        new_from[block_eps] = torch.as_tensor(starts, dtype=torch.long)
+        new_to[block_eps] = torch.as_tensor(ends, dtype=torch.long)
+        dataset.episode_data_index = {"from": new_from, "to": new_to}
+
     if data_config.prompt_from_task:
         dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
 

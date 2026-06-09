@@ -64,6 +64,32 @@ def main(config_name: str, expected_robot: list[int] | None = None):
         ok_eps = robot_eps == sorted(expected_robot)
         print(f"      robot episode set == {sorted(expected_robot)}: {'PASS' if ok_eps else 'FAIL'}")
 
+    # [4.5] action-chunk fetch correctness: with delta_timestamps on a subset, the rebuilt
+    # episode_data_index must return the RIGHT frames, not just avoid crashing. The chunk's first
+    # step is delta 0 -> the frame itself, so chunk[0] must equal the frame's own action; chunk[1]
+    # (mid-episode) must equal the next frame's action. Checks one robot and one human frame.
+    inner = unwrap(ds)
+    H = cfg.model.action_horizon
+    print(f"\n[4.5] action-chunk correctness (delta_timestamps + subset), horizon={H}:")
+    robot_pos = np.flatnonzero(ms >= ms.max())
+    human_pos = np.flatnonzero(ms < ms.max())
+    all_ok = True
+    for label, pos in [("robot", robot_pos), ("human", human_pos)]:
+        if len(pos) == 0:
+            continue
+        idx = int(pos[len(pos) // 2])  # a mid-list frame (very likely mid-episode)
+        item = inner[idx]
+        chunk = np.asarray(item["actions"])
+        raw0 = np.asarray(inner.hf_dataset[idx]["actions"])
+        raw1 = np.asarray(inner.hf_dataset[idx + 1]["actions"])
+        ok_shape = chunk.shape[0] == H
+        ok0 = np.allclose(chunk[0], raw0, atol=1e-5)
+        ok1 = np.allclose(chunk[1], raw1, atol=1e-5)
+        all_ok = all_ok and ok_shape and ok0 and ok1
+        print(f"      {label} frame {idx}: shape={chunk.shape} horizon_ok={ok_shape} "
+              f"chunk[0]==frame={ok0} chunk[1]==next={ok1}")
+    print(f"      chunk fetch: {'PASS' if all_ok else 'FAIL — boundaries wrong, would corrupt training'}")
+
     # [4/4] Does the sampler actually realize the target ratio?
     if dc.robot_sampling_fraction is not None:
         sampler = DL._make_mix_sampler(ds, dc.robot_sampling_fraction, dc.robot_episode_threshold, seed=0)
