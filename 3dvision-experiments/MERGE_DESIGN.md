@@ -81,6 +81,16 @@ Run `python 3dvision-experiments/inspect_lerobot_format.py` and branch:
   change values, only avoid re-encoding). Confirm a sample image opens and matches.
 - Only run the **full** merge after the smoke matches.
 
+## 6b. CRITICAL — fps / timestamps (a real bug the first merge hit)
+`oic_human` is **30 Hz**; the merged dataset is **fps=50**. You **MUST regenerate the human
+`timestamp` column as `frame_index / 50`** — do **NOT** copy `oic_human`'s 30 Hz timestamps
+(0.0333 s spacing). Training builds 10-step action chunks at `delta_timestamps = [t/50 …]`
+(0.02 s spacing); with 30 Hz human stamps the lookups miss LeRobot's tolerance and the dataset
+**fails to load**. (`build_oic_mix` is correct because LeRobot's `add_frame` auto-stamps
+`frame_index/fps`.) Robot timestamps from `egoverse/all` are already 50 Hz — leave them.
+If a merge already shipped with this bug, patch it with `fix_mix_timestamps.py` (rewrites only the
+human `timestamp` column, no image re-encode).
+
 ## 7. Gotchas
 - LeRobot v2.1 metadata is strict — a wrong `total_frames`/`episode_index`/`index` breaks dataset loading.
   Counts must be exact and contiguous (`index` = 0..total_frames-1 across the whole merged set).
