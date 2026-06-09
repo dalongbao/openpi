@@ -265,6 +265,11 @@ def main(config: _config.TrainConfig):
             reduced_info = jax.device_get(jax.tree.map(jnp.mean, stacked_infos))
             info_str = ", ".join(f"{k}={v:.4f}" for k, v in reduced_info.items())
             pbar.write(f"Step {step}: {info_str}")
+            # pbar.write goes to tqdm's stream, which the tqdm->logging shim swallows on the cluster
+            # (offline/slurm) -> loss never lands in the slurm .out. Mirror it through logging (shows
+            # up like every other [I] line) and into the bar postfix so it's actually monitorable.
+            logging.info(f"Step {step}: {info_str}")
+            pbar.set_postfix_str(info_str)
             wandb.log(reduced_info, step=step)
             infos = []
         batch = next(data_iter)
