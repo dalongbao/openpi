@@ -71,12 +71,14 @@ def main(
     robot_max_frames: int = 10_000,
     max_robot: int | None = None,
     max_human: int | None = None,
+    low_mem: bool = False,             # synchronous image writing -> bounded memory, cannot OOM (slower)
     robot_task: str = "put the object in the bowl",
     human_task: str = "put the object in the bowl",
 ):
     out = HF_LEROBOT_HOME / repo_id
     if out.exists():
         shutil.rmtree(out)
+    wt, wp = (0, 0) if low_mem else (4, 4)
     ds = LeRobotDataset.create(
         repo_id=repo_id, robot_type="franka", fps=50,
         features={
@@ -85,7 +87,7 @@ def main(
             "actions": {"dtype": "float32", "shape": (U.ACTION_DIM,), "names": ["actions"]},
             "action_mask": {"dtype": "float32", "shape": (U.ACTION_DIM,), "names": ["action_mask"]},
         },
-        image_writer_threads=4, image_writer_processes=4,
+        image_writer_threads=wt, image_writer_processes=wp,
     )
 
     # ---------- ROBOT (R-ID): identity, full mask ----------
