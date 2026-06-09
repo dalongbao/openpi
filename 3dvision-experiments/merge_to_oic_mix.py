@@ -153,7 +153,13 @@ def merge(robot_root, human_root, target, max_robot, max_human, force):
         chunk = out_ei // CHUNKS_SIZE
         cdir = target / "data" / f"chunk-{chunk:03d}"
         cdir.mkdir(parents=True, exist_ok=True)
-        pq.write_table(t, cdir / f"episode_{out_ei:06d}.parquet")
+        # Write ONE row group per episode. HF datasets' load_dataset casts the nested `image`
+        # struct on read; that cast fails ("Nested data conversions not implemented for chunked
+        # array outputs") if a file reads back as a MULTI-chunk column, which happens when a big
+        # episode is split into multiple row groups. row_group_size >= length => one row group
+        # => one chunk => the cast works. combine_chunks() keeps the in-memory table single-chunk.
+        t = t.combine_chunks()
+        pq.write_table(t, cdir / f"episode_{out_ei:06d}.parquet", row_group_size=max(1, int(length)))
         episodes_meta.append({"episode_index": out_ei, "tasks": [TASK], "length": int(length)})
         episodes_stats.append(_episode_stats(out_ei, length, state24, act24, mask24, src_imgstats))
         out_ei += 1
