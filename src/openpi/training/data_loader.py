@@ -326,7 +326,7 @@ def _make_mix_sampler(
     generator.manual_seed(seed)
     return torch.utils.data.WeightedRandomSampler(
         weights=torch.as_tensor(weights, dtype=torch.double),
-        num_samples=len(episode_index),
+        num_samples=len(is_robot),
         replacement=True,
         generator=generator,
     )
