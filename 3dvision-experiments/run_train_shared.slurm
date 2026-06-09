@@ -3,7 +3,7 @@
 # group-readable location (default lichin's scratch); checkpoints + HF caches go to
 # YOUR OWN scratch ($USER). Norm stats come from the repo's assets/ (commit them once).
 #
-#   sbatch --partition=gpu.120h --time=120:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1 \
+#   sbatch --partition=gpu.24h --time=24:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1 \
 #          3dvision-experiments/run_train_shared.slurm <config> <exp_name> <seed>
 #   e.g.  ... run_train_shared.slurm pi05_ego_mix_oic_n15 mix_n15 42
 #

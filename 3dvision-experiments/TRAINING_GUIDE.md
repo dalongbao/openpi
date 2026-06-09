@@ -33,7 +33,8 @@ UV_FROZEN=1 uv run python -c "from openpi.shared import download; download.maybe
 **Get the datasets** (they live in one place — pick the one that works):
 
 - **Option A — read the shared copy (fastest, no download):** point `DATA_HOME` at lichin's scratch.
-  Test: `ls /cluster/scratch/lichin/lerobot/egoverse/all`. If that lists files, you're done — use
+  Test: `ls /cluster/scratch/lichin/lerobot/egoverse/{all,oic_mix,oic_human}` (all three: `all` for
+  rid configs, `oic_mix` for mix, `oic_human` for `hid`). If those list files, you're done — use
   `DATA_HOME=/cluster/scratch/lichin/lerobot` (the default in the slurm).
 - **Option B — download from HF (if A is permission-blocked):** on the **login node**,
   ```bash
@@ -60,7 +61,9 @@ Normalization must be **identical across every point on a curve** (n5/n15/n30/n6
 *data quantity* with a *shifting normalizer* — `compute_norm_stats` applies the `episodes=` filter, so
 a per-N run would produce different stats over its own subset. The canonical full-N stats are committed
 to the repo (own them: `pi05_egoverse` = rid curve, `pi05_ego_mix_oic` = mix curve). After `git pull`,
-**copy them into your per-N config dir** (one-liners cover all three N at once):
+**copy them into your per-N config dir** (one-liners cover all three N at once). **This copy is NOT
+optional — without a `norm_stats.json` at the config's asset path the job dies immediately at startup
+(`Normalization stats not found ... ValueError`).**
 
 ```bash
 # rid curve (pi05_egoverse_n5/n15/n30):
@@ -82,7 +85,8 @@ cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} \
 > - Pass **`--max_frames 20000`** — without it the script decodes *every* image of the full dataset
 >   (~8 h for `egoverse/all`!); a 20k-frame subsample gives identical 24-dim stats in ~20–30 min.
 
-**(b) Train** — A100, ~half a day (~10–14 h for 30k steps; resumes if requeued):
+**(b) Train** — A100, **~24–28 h for 30k steps** (~3.5 s/it on a 40 GB A100; faster on 80 GB). This
+exceeds one `gpu.24h` window, so expect to **resubmit once to resume** (see the note below):
 ```bash
 cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} \
   sbatch --partition=gpu.24h --time=24:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1 \
@@ -90,10 +94,12 @@ cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} \
 ```
 Checkpoints → your own `/cluster/scratch/$USER/checkpoints/<CONFIG>/<EXP_NAME>/`.
 
-> **Use `gpu.24h`, not `gpu.120h`.** Training is ~10–14 h, so 24 h is plenty — and the shorter
-> partition + backfill **queues much faster**. It's safe even if it doesn't finish: the slurm passes
-> `--resume`, checkpoints land every 5k steps, so a resubmit (same command) continues from the last
-> one. (If `gpu.24h` doesn't exist on the cluster, just keep `--time=24:00:00` — backfill still helps.)
+> **Use `gpu.24h`, not `gpu.120h`.** At ~3.5 s/it a 30k run is ~24–28 h, so it will **likely hit the
+> 24 h wall once (around step ~25k)** — that's expected and safe: the slurm passes `--resume`,
+> checkpoints land every 5k steps, so **resubmitting the exact same command continues from the last
+> checkpoint** to 30k (~5 more h). The shorter partition + backfill **queues much faster** than
+> `gpu.120h`, which is why we eat the one resume. An 80 GB A100 runs faster and may finish in one
+> window. (If `gpu.24h` doesn't exist on the cluster, keep `--time=24:00:00` — backfill still helps.)
 
 > **Shorter queue — cast a wider net by GPU memory.** The 40 GB A100s are scarce (3 nodes). Instead
 > of pinning `--gpus=a100:1`, request *any* card with enough VRAM to hold batch-32 LoRA and take
