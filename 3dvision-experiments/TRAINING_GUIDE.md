@@ -94,6 +94,26 @@ cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} sbatch --
 
 ---
 
+## 3.5 What objects each split contains
+
+Objects are **duck / ball / plant**, each in plain / `_trans` (transparent) / `_bucket` variants
+(9 classes). Splits are **stratified by object** so the curve measures data *quantity*, not coverage.
+
+**Held-out eval (12 eps — all 9 classes):** ball×2, ball_bucket×1, ball_trans×1, duck×2,
+duck_bucket×1, duck_trans×2, plant×1, plant_bucket×1, plant_trans×1.
+
+**Training subsets (nested, 5 ⊂ 15 ⊂ 30 ⊂ 64):**
+
+| N | classes | composition |
+|---|---------|-------------|
+| 5  | 5 of 9 (**no plant**, no duck_trans) | ball, ball_bucket, ball_trans, duck, duck_bucket — ×1 each |
+| 15 | all 9 | ball / ball_bucket / ball_trans / duck / duck_bucket / duck_trans ×2; plant / plant_bucket / plant_trans ×1 |
+| 30 | all 9 | ball-family ×4; duck / duck_bucket / duck_trans ×3; plant-family ×3 |
+| 64 | all 9 (+3 unlabelled `n`/`dk`) | the full training pool |
+
+N=5 has **no plant** (5 slots can't cover 9 classes) → low-N models are coverage-limited on held-out
+plant; this hits `rid_n5` and `mix_n5` equally, so their *comparison* stays fair.
+
 ## 4. Rules
 
 - **Claim your configs in the shared sheet first** (`config · owner · status · ckpt path · eval score`) — no double-training.
