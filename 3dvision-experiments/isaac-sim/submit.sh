@@ -68,6 +68,7 @@ apptainer exec --nv \
     --env "OIC_POS_MAP=${OIC_POS_MAP:-}" \
     --env "OIC_CALIBRATE=${OIC_CALIBRATE:-}" \
     --env "OIC_ANCHOR_FRAMES=${OIC_ANCHOR_FRAMES:-}" \
+    --env "BALL_JITTER_SEED=${BALL_JITTER_SEED:-}" \
     --env "EGOCENTRIC=${EGOCENTRIC:-}" \
     --env "EGO_HIDE_ARM=${EGO_HIDE_ARM:-}" \
     --env "RUN_TAG=${RUN_TAG:-}" \

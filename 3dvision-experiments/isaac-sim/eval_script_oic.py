@@ -131,7 +131,13 @@ for _old in ("/World/plate_small", "/World/SM_Crate_A07_Yellow_01_physics"):
 # (4-colour mesh ball + wide dusty-purple bowl at the canonical positions), with physics. ---
 sys.path.insert(0, "/workspace")
 import scene_build
-scene_build.add_ball(_stage, "/World/object", scene_build.OBJECT_POS)
+# BALL_JITTER_SEED moves the ball by a small seeded offset (visual-tracking test); the
+# calibration below still anchors to the NOMINAL scene_build.OBJECT_POS, so the arm reaches
+# this moved ball only if the policy tracks it from vision.
+_ball_seed = os.environ.get("BALL_JITTER_SEED")
+_ball_pos = scene_build.jittered_object_pos(_ball_seed) if _ball_seed else scene_build.OBJECT_POS
+print(f"[ball] pos={tuple(round(v, 3) for v in _ball_pos)}  nominal={scene_build.OBJECT_POS}  seed={_ball_seed}")
+scene_build.add_ball(_stage, "/World/object", _ball_pos)
 scene_build.add_bowl(_stage, "/World/bowl", scene_build.BOWL_POS)
 
 # Optional scene realism (shared with the object_in_bowl eval).

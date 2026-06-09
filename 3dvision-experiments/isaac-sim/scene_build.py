@@ -13,11 +13,23 @@ physics (collider; the ball also a rigid body) so the eval can grasp/drop — th
 ignores physics (pass physics=False to pin the ball for the static snapshot).
 """
 import math
+import random
 from pxr import UsdGeom, Gf, Sdf, UsdPhysics
 
 # Episode initial state: bowl on the table, ball OUTSIDE it in front (robot then places it).
 OBJECT_POS = (0.78, -0.48, 1.862)
 BOWL_POS   = (0.88, -0.10, 1.807)
+
+
+def jittered_object_pos(seed, radius=0.08):
+    """OBJECT_POS + a small seeded planar offset (<= radius m), same z, for the
+    'move-the-ball' visual-tracking test. The eval still CALIBRATES to the nominal OBJECT_POS,
+    so the arm reaches this moved ball ONLY if the policy actually tracks it from vision
+    (not if it just replays the calibrated trajectory). Stays near the reachable nominal spot."""
+    rng = random.Random(int(seed))
+    ang = rng.uniform(0.0, 2.0 * math.pi)
+    r = radius * math.sqrt(rng.random())
+    return (OBJECT_POS[0] + r * math.cos(ang), OBJECT_POS[1] + r * math.sin(ang), OBJECT_POS[2])
 
 _ASSET_PATCHES = {
     "/World/fr3": "/workspace/assets/fr3_full/fr3.usd",
