@@ -47,8 +47,11 @@ For each config you train:
 **(a) Norm stats** — login node, once per config (reads the dataset; ~few min):
 ```bash
 cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} \
-  HF_LEROBOT_HOME=$DATA_HOME UV_FROZEN=1 uv run python scripts/compute_norm_stats.py --config-name <CONFIG>
+  HF_LEROBOT_HOME=$DATA_HOME HF_HOME=/cluster/scratch/$USER/hf_cache HF_DATASETS_CACHE=/cluster/scratch/$USER/hf_cache/datasets \
+  UV_FROZEN=1 uv run python scripts/compute_norm_stats.py --config-name <CONFIG>
 ```
+> **Must** set `HF_HOME`/`HF_DATASETS_CACHE` to **scratch** — the loader regenerates the dataset
+> into the HF cache, and the default (`~/.cache` on home, 50 GB) overflows → `Disk quota exceeded`.
 
 **(b) Train** — A100, ~half a day (resumes if requeued):
 ```bash
@@ -88,7 +91,7 @@ huggingface-cli upload --repo-type model --private <HF_MODEL_ORG>/<CONFIG> \
 
 **Example** — to train MIX n15:
 ```bash
-cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} HF_LEROBOT_HOME=$DATA_HOME UV_FROZEN=1 uv run python scripts/compute_norm_stats.py --config-name pi05_ego_mix_oic_n15
+cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} HF_LEROBOT_HOME=$DATA_HOME HF_HOME=/cluster/scratch/$USER/hf_cache HF_DATASETS_CACHE=/cluster/scratch/$USER/hf_cache/datasets UV_FROZEN=1 uv run python scripts/compute_norm_stats.py --config-name pi05_ego_mix_oic_n15
 cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} sbatch --partition=gpu.120h --time=120:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1 3dvision-experiments/run_train_shared.slurm pi05_ego_mix_oic_n15 mix15 42
 ```
 
