@@ -91,15 +91,24 @@ try:
 
     cfg        = _config.get_config(CONFIG_NAME)
     cfg        = dataclasses.replace(cfg, assets_base_dir="/workspace/openpi/assets")
+    _ckpt_dir  = CHECKPOINT_DIR
+    if os.environ.get("BASE_MODEL", "0").lower() in ("1", "true", "yes", "y"):
+        # Untrained baseline control: swap the LoRA gemma variants -> plain gemma so the base
+        # checkpoint loads (LoRA adapters init to zero => this IS un-fine-tuned pi0.5), and load
+        # the base weights. Same scene/calibration/tracking -> isolates what fine-tuning added.
+        cfg = dataclasses.replace(cfg, model=dataclasses.replace(
+            cfg.model, paligemma_variant="gemma_2b", action_expert_variant="gemma_300m"))
+        _ckpt_dir = os.environ.get("BASE_WEIGHTS_DIR") or "/base_weights"
+        print(f"[init] BASE MODEL mode -> plain gemma + base weights {_ckpt_dir}")
     data_cfg   = cfg.data.create(cfg.assets_dirs, cfg.model)
     _ns_dir    = _pl.Path(NORM_STATS_DIR) if NORM_STATS_DIR else (cfg.assets_dirs / data_cfg.repo_id)
     print(f"[init] norm stats from {_ns_dir}")
     norm_stats = normalize.load(_ns_dir)
 
     policy = policy_config.create_trained_policy(
-        cfg, CHECKPOINT_DIR, norm_stats=norm_stats, default_prompt=LANGUAGE_COMMAND,
+        cfg, _ckpt_dir, norm_stats=norm_stats, default_prompt=LANGUAGE_COMMAND,
     )
-    print(f"[init] Loaded {CONFIG_NAME} from {CHECKPOINT_DIR}")
+    print(f"[init] Loaded {CONFIG_NAME} from {_ckpt_dir}")
 except Exception as e:
     print(f"[FATAL] Could not load policy: {e}")
     traceback.print_exc()
