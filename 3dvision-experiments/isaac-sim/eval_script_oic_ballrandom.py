@@ -22,7 +22,7 @@ os.environ["BALL_JITTER_SEED"] = _seed
 if not os.environ.get("RUN_TAG"):
     os.environ["RUN_TAG"] = f"_ball{_seed}"
 if not os.environ.get("NUM_STEPS"):
-    os.environ["NUM_STEPS"] = "1000"
+    os.environ["NUM_STEPS"] = "250"          # quick 5 s test by default; set NUM_STEPS for longer
 
 print(f"[ballrand] BALL_JITTER_SEED={_seed}  RUN_TAG={os.environ['RUN_TAG']}  NUM_STEPS={os.environ['NUM_STEPS']}")
 
