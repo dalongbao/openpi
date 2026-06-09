@@ -18,7 +18,13 @@ ssh euler.ethz.ch
 git clone https://github.com/dalongbao/openpi ~/openpi && cd ~/openpi
 curl -LsSf https://astral.sh/uv/install.sh | sh && source ~/.bashrc
 UV_FROZEN=1 uv sync                     # builds the venv ON THE LOGIN NODE (compute has no internet)
+
+# Pre-cache the PaliGemma tokenizer ON THE LOGIN NODE. Training downloads it from gs://big_vision,
+# but compute nodes have NO internet -> without this the training job dies at startup. Run once:
+UV_FROZEN=1 uv run python -c "from openpi.shared import download; download.maybe_download('gs://big_vision/paligemma_tokenizer.model', gs={'token':'anon'})"
 ```
+> ⚠️ Don't skip the tokenizer line — it's the #1 cause of a training job failing instantly on a
+> compute node. It's idempotent (instant if already cached), so just run it.
 
 **Get the datasets** (they live in one place — pick the one that works):
 
