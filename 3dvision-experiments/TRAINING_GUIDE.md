@@ -61,13 +61,18 @@ cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} \
 > - Pass **`--max_frames 20000`** — without it the script decodes *every* image of the full dataset
 >   (~8 h for `egoverse/all`!); a 20k-frame subsample gives identical 24-dim stats in ~20–30 min.
 
-**(b) Train** — A100, ~half a day (resumes if requeued):
+**(b) Train** — A100, ~half a day (~10–14 h for 30k steps; resumes if requeued):
 ```bash
 cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} \
-  sbatch --partition=gpu.120h --time=120:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1 \
+  sbatch --partition=gpu.24h --time=24:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1 \
   3dvision-experiments/run_train_shared.slurm <CONFIG> <EXP_NAME> 42
 ```
 Checkpoints → your own `/cluster/scratch/$USER/checkpoints/<CONFIG>/<EXP_NAME>/`.
+
+> **Use `gpu.24h`, not `gpu.120h`.** Training is ~10–14 h, so 24 h is plenty — and the shorter
+> partition + backfill **queues much faster**. It's safe even if it doesn't finish: the slurm passes
+> `--resume`, checkpoints land every 5k steps, so a resubmit (same command) continues from the last
+> one. (If `gpu.24h` doesn't exist on the cluster, just keep `--time=24:00:00` — backfill still helps.)
 
 > **Shorter queue — cast a wider net by GPU memory.** The 40 GB A100s are scarce (3 nodes). Instead
 > of pinning `--gpus=a100:1`, request *any* card with enough VRAM to hold batch-32 LoRA and take
@@ -112,7 +117,7 @@ huggingface-cli upload --repo-type model --private <HF_MODEL_ORG>/<CONFIG> \
 **Example** — to train MIX n15:
 ```bash
 cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} HF_LEROBOT_HOME=$DATA_HOME HF_HOME=/cluster/scratch/$USER/hf_cache HF_DATASETS_CACHE=/cluster/scratch/$USER/hf_cache/datasets UV_FROZEN=1 uv run python scripts/compute_norm_stats.py --config-name pi05_ego_mix_oic_n15 --max_frames 20000
-cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} sbatch --partition=gpu.120h --time=120:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1 3dvision-experiments/run_train_shared.slurm pi05_ego_mix_oic_n15 mix15 42
+cd ~/openpi && DATA_HOME=${DATA_HOME:-/cluster/scratch/lichin/lerobot} sbatch --partition=gpu.24h --time=24:00:00 --mem-per-cpu=16G --cpus-per-task=8 --gpus=a100:1 3dvision-experiments/run_train_shared.slurm pi05_ego_mix_oic_n15 mix15 42
 ```
 
 ---
