@@ -21,14 +21,15 @@ OBJECT_POS = (0.78, -0.48, 1.862)
 BOWL_POS   = (0.88, -0.10, 1.807)
 
 
-def jittered_object_pos(seed, radius=0.08):
-    """OBJECT_POS + a small seeded planar offset (<= radius m), same z, for the
-    'move-the-ball' visual-tracking test. The eval still CALIBRATES to the nominal OBJECT_POS,
-    so the arm reaches this moved ball ONLY if the policy actually tracks it from vision
-    (not if it just replays the calibrated trajectory). Stays near the reachable nominal spot."""
+def jittered_object_pos(seed, r_min=0.10, r_max=0.15):
+    """OBJECT_POS + a seeded planar offset of GUARANTEED magnitude r_min..r_max m (same z),
+    for the 'move-the-ball' visual-tracking test. The eval still CALIBRATES to the nominal
+    OBJECT_POS, so the arm reaches this moved ball ONLY if the policy tracks it from vision
+    (not if it just replays the calibrated trajectory). 10-15 cm is clearly visible yet stays
+    in the robot's reach."""
     rng = random.Random(int(seed))
     ang = rng.uniform(0.0, 2.0 * math.pi)
-    r = radius * math.sqrt(rng.random())
+    r = rng.uniform(r_min, r_max)
     return (OBJECT_POS[0] + r * math.cos(ang), OBJECT_POS[1] + r * math.sin(ang), OBJECT_POS[2])
 
 _ASSET_PATCHES = {
