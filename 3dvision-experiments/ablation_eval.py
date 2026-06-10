@@ -208,6 +208,9 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=Fals
         out["reached_bowl"] = float(reached_bowl)
         # ordered success: reach object, THEN bowl (object-before-bowl in the rollout)
         out["ordered_success"] = float(reached_obj and reached_bowl and i_bowl >= i_obj)
+        # bare ordering bit (threshold-free: argmin times). With reach_*_err this lets any
+        # success threshold be recomputed offline: success(t) = (obj_err<t)&(bowl_err<t)&order_ok
+        out["subgoal_order_ok"] = float(i_bowl >= i_obj)
         # gripper pattern: hand more actuated during transport (object->bowl) than before pickup,
         # normalized per-episode. Window means are robust vs single-point comparison.
         # Only meaningful for models with hand dims (24-dim); N/A for the 6-dim EE-only space.
