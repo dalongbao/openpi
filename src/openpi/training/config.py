@@ -1151,7 +1151,7 @@ _CONFIGS = [
             action_expert_variant="gemma_300m_lora",
         ).get_freeze_filter(),
         save_interval=5_000,
-        keep_period=30_000,
+        keep_period=5_000,
         num_train_steps=30_000,
     ),
     TrainConfig(
@@ -1183,7 +1183,7 @@ _CONFIGS = [
             action_expert_variant="gemma_300m_lora",
         ).get_freeze_filter(),
         save_interval=5_000,
-        keep_period=30_000,
+        keep_period=5_000,
         num_train_steps=30_000,
     ),
     # --- Human-only configs ---
@@ -1203,7 +1203,7 @@ _CONFIGS = [
         ema_decay=None,
         weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
         freeze_filter=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora").get_freeze_filter(),
-        save_interval=5_000, keep_period=30_000, num_train_steps=30_000,
+        save_interval=5_000, keep_period=5_000, num_train_steps=30_000,
     ),
     TrainConfig(
         name="pi05_ego_human_oic",
@@ -1221,7 +1221,7 @@ _CONFIGS = [
         ema_decay=None,
         weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
         freeze_filter=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora").get_freeze_filter(),
-        save_interval=5_000, keep_period=30_000, num_train_steps=30_000,
+        save_interval=5_000, keep_period=5_000, num_train_steps=30_000,
     ),
     # --- Mixed human + teleop configs ---
     TrainConfig(
@@ -1240,7 +1240,7 @@ _CONFIGS = [
         ema_decay=None,
         weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
         freeze_filter=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora").get_freeze_filter(),
-        save_interval=5_000, keep_period=30_000, num_train_steps=30_000,
+        save_interval=5_000, keep_period=5_000, num_train_steps=30_000,
     ),
     # Unified R-ID(object_in_bowl) + H-ID(oic) mix: 24D base frame, per-dim hand-loss-mask on human.
     TrainConfig(
@@ -1259,7 +1259,7 @@ _CONFIGS = [
         ema_decay=None,
         weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
         freeze_filter=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora").get_freeze_filter(),
-        save_interval=5_000, keep_period=30_000, num_train_steps=30_000,
+        save_interval=5_000, keep_period=5_000, num_train_steps=30_000,
     ),
     # RoboArena & PolaRiS configs.
     *roboarena_config.get_roboarena_configs(),
@@ -1292,7 +1292,7 @@ def _ego_subset_train_config(name: str, data: DataConfigFactory) -> TrainConfig:
         weight_loader=weight_loaders.CheckpointWeightLoader("/cluster/work/cvg/data/Egoverse/pi05_base_jax/params"),
         freeze_filter=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora",
                                            action_expert_variant="gemma_300m_lora").get_freeze_filter(),
-        save_interval=5_000, keep_period=30_000, num_train_steps=30_000,
+        save_interval=5_000, keep_period=5_000, num_train_steps=30_000,
     )
 
 
