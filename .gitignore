@@ -173,3 +173,9 @@ NOTES.md
 # label_objects scratch (per-user, not shared)
 3dvision-experiments/_view.png
 3dvision-experiments/object_labels.csv
+
+# local-only eval/report docs (keep out of the shared repo)
+FINETUNING_NOTES.md
+3dvision-experiments/EVAL_PLAYBOOK.md
+3dvision-experiments/EVAL_OUTCOMES.md
+3dvision-experiments/EVAL_RISKS.md

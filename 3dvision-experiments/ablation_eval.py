@@ -17,12 +17,15 @@ Metrics (per episode, then aggregated):
 
 POSITION (action dims 0-2) is the cross-model yardstick: it is shared by the 24-dim robot
 space and the 6-dim human/oic EE-only space, so models of EITHER dim are scored on the SAME
-held-out R-ID frames with NO retraining/convention-unification. Pass `--state-dim 6` for a
-6-dim model: its input state is rebuilt from the robot frame as [xyz + Euler], and only
-position metrics (cos_dir, mag_ratio, pos_mse, rollout, reach/ordered-success) are reported;
-rotation/hand metrics (arm_mse/hand_mse/gripper_ok) are N/A (NaN). CAVEAT: assumes robot and
-human POSITION share a frame/scale — if they differ by a rotation, the 6-dim model's score is
-a lower bound (frame mismatch penalizes it), not a clean capability read.
+held-out R-ID frames with NO retraining. Pass `--state-dim 6` for a 6-dim model: its input
+state is rebuilt as [xyz + yaw,pitch,roll] in the RESOLVED oic convention (intrinsic ZYX,
+radians) and remapped base->head via egoverse_unify; its predicted positions are mapped back
+head->base so all metrics live in the robot base frame. Only position metrics (cos_dir,
+mag_ratio, pos_mse, rollout, reach/ordered-success) are reported; rotation/hand metrics
+(arm_mse/hand_mse/gripper_ok) are N/A (NaN). CAVEAT: the head<->base ORIENTATION map is a
+hypothesis — the always-on Kabsch alignment (cos_dir vs cos_dir_aligned) diagnoses a residual
+fixed-frame mismatch; `--no-human-frame-remap` reproduces the raw (unremapped) behavior. A
+6-dim model's score remains a LOWER BOUND, not a clean capability read.
 
 Writes a JSON of per-episode + summary metrics; aggregate across conditions with
 aggregate_ablation.py.
@@ -34,14 +37,17 @@ Run on Euler via uv (mirror run_inference.slurm):
     --episodes-dir <held_out_dir>
 """
 import dataclasses
+import hashlib
 import json
 import pathlib
+import subprocess
 
 import h5py
 import numpy as np
 import tyro
 from scipy.spatial.transform import Rotation as _Rotation
 
+from openpi.policies import egoverse_unify as _unify
 from openpi.policies import policy_config
 from openpi.shared import normalize
 from openpi.training import config as _config
@@ -89,21 +95,38 @@ def load_frame(f, idx):
     return np.asarray(img), state
 
 
-def make_state(vec, state_dim):
+def make_state(vec, state_dim, frame_remap=True):
     """Build the policy input state at the model's expected dim from a robot state vector.
     24-dim robot models get the native [arm EE pose(7: xyz+quat xyzw) + hand(17)]. A 6-dim
-    (human/oic) model gets [xyz + Euler(xyz)] — rotation order is a best-effort guess (the
-    oic Euler convention is unknown), so only POSITION is trusted downstream."""
+    (human/oic) model gets [xyz + yaw,pitch,roll] in the RESOLVED oic convention (intrinsic
+    ZYX, radians — EgoMimic pose_utils), with the robot base frame remapped into the egocentric
+    head frame (egoverse_unify.HEAD_TO_BASE transposed) so the model sees in-distribution
+    states. Rotation remains best-effort (the head<->base ORIENTATION map is a hypothesis);
+    POSITION is the trusted axis downstream. `--no-human-frame-remap` reverts to the raw
+    base-frame state (the pre-fix behavior, for A/B-ing the remap itself)."""
     vec = np.asarray(vec, dtype=np.float32)
     if len(vec) == state_dim:
         return vec                                  # already in the model's space (e.g. rollout feedback)
     if state_dim >= ACTION_DIM:
         return vec                                  # 24-dim robot space, pass through
-    eul = _Rotation.from_quat(vec[3:ARM_DIM]).as_euler("xyz")  # quat xyzw -> 3 Euler
-    return np.concatenate([vec[:POS_DIM], eul]).astype(np.float32)
+    # reuse the converter's OWN base->canonical(=head) map so eval and mix-build share one
+    # convention hypothesis (canonical = the EgoMimic head frame the human data lives in)
+    arm7 = _unify.robot_arm7_base_to_canonical(vec[:ARM_DIM])[0] if frame_remap else vec[:ARM_DIM]
+    ypr = _Rotation.from_quat(arm7[3:7]).as_euler("ZYX")          # intrinsic ZYX -> [yaw, pitch, roll]
+    return np.concatenate([arm7[:POS_DIM], ypr]).astype(np.float32)
 
 
-def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=False, state_dim=ACTION_DIM):
+def to_base_pos(pos, state_dim, frame_remap=True):
+    """Map predicted POSITIONS back into the ROBOT BASE frame so every metric is computed in
+    one frame. Identity for 24-dim (robot-space) models or when the remap is disabled.
+    `pos` is (..., 3) row-stacked head-frame vectors; v_base = HEAD_TO_BASE @ v_head."""
+    if state_dim >= ACTION_DIM or not frame_remap:
+        return pos
+    return pos @ _unify.HEAD_TO_BASE.T
+
+
+def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=False, state_dim=ACTION_DIM,
+                 frame_remap=True):
     """Score one R-ID episode. POSITION (dims 0-2) is the cross-model yardstick and works for
     any action dim; the full pose/hand metrics are computed only for 24-dim (robot-space) models."""
     out = {}
@@ -120,11 +143,14 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=Fals
             else:
                 img, _ = load_frame(f, idx)
                 pred = np.asarray(policy.infer(
-                    {"observation/image": img, "observation/state": make_state(state24, state_dim),
+                    {"observation/image": img, "observation/state": make_state(state24, state_dim, frame_remap),
                      "prompt": prompt})["actions"])[:chunk_len]
-            # position (dims 0-2) is shared across the 24-dim and 6-dim action spaces -> the comparable metric
-            pos_sq.append((pred[:, :POS_DIM] - gt[:, :POS_DIM]) ** 2)
-            gd.append(gt[-1, :POS_DIM] - state24[:POS_DIM]); pd.append(pred[-1, :POS_DIM] - state24[:POS_DIM])
+            # position (dims 0-2) is shared across the 24-dim and 6-dim action spaces -> the comparable
+            # metric. 6-dim (head-frame) predictions are mapped back to the BASE frame first so all
+            # downstream metrics live in one frame.
+            ppos = to_base_pos(pred[:, :POS_DIM], state_dim, frame_remap)
+            pos_sq.append((ppos - gt[:, :POS_DIM]) ** 2)
+            gd.append(gt[-1, :POS_DIM] - state24[:POS_DIM]); pd.append(ppos[-1] - state24[:POS_DIM])
             if pred.shape[1] >= ACTION_DIM:                # full pose+hand metrics: robot-space (24-dim) only
                 full_sq.append((pred - gt) ** 2); zero_sq.append(gt ** 2); const_sq.append((state24[None] - gt) ** 2)
 
@@ -157,10 +183,10 @@ def eval_episode(policy, h5_path, frame_stride, chunk_len, prompt, gt_check=Fals
             else:
                 img, _ = load_frame(f, t)
                 pred = np.asarray(policy.infer(
-                    {"observation/image": img, "observation/state": make_state(cur, state_dim),
+                    {"observation/image": img, "observation/state": make_state(cur, state_dim, frame_remap),
                      "prompt": prompt})["actions"])
                 cur = pred[k - 1].astype(np.float32)       # advance to end of chunk (absolute EE pose, native dim)
-            roll_pos.append(cur[:POS_DIM])
+            roll_pos.append(to_base_pos(cur[None, :POS_DIM], state_dim, frame_remap)[0])
             if len(cur) >= ACTION_DIM:                     # hand dims present -> track gripper actuation
                 roll_grip.append(float(cur[ARM_DIM:].mean()))
             gt_pos.append(f["actions_arm"][min(t + k, total - 1)][:POS_DIM])
@@ -212,11 +238,13 @@ def main(
     gt_check: bool = False,              # self-test: score GT actions (no policy) — expect ordered_success≈1
     state_dim: int = ACTION_DIM,        # 24 = robot space; 6 = human/oic EE-only model (POSITION-only scoring)
     norm_stats_dir: str | None = None,  # override norm-stats path (e.g. <ckpt>/assets/egoverse/oic_human)
-    align: bool = False,                # fit ONE global rotation+scale (Kabsch) pred->GT, report post-align cos
+    align: bool = True,                 # fit ONE global rotation+scale (Kabsch) pred->GT, report post-align cos
+    human_frame_remap: bool = True,     # 6-dim models: remap state base->head + predictions head->base
     output_dir: str = "/cluster/scratch/lichin/pi0_test/ablation",
 ):
     cfg = _config.get_config(config_name)
     chunk_len = cfg.model.action_horizon
+    ns_path = ns_md5 = None
     if gt_check:
         condition = condition or "GT_check"
         policy = None
@@ -230,9 +258,24 @@ def main(
             cfg = dataclasses.replace(cfg, model=dataclasses.replace(
                 cfg.model, paligemma_variant="gemma_2b", action_expert_variant="gemma_300m"))
         data_cfg = cfg.data.create(cfg.assets_dirs, cfg.model)
-        ns_path = pathlib.Path(norm_stats_dir) if norm_stats_dir else cfg.assets_dirs / data_cfg.repo_id
+        # Norm-stats resolution (train/eval mismatch silently corrupts every metric — prefer the
+        # snapshot train.py wrote INSIDE the checkpoint, which always matches how it was trained):
+        #   1. explicit --norm-stats-dir   2. <ckpt>/assets/<repo_id> (finetuned only)   3. local checkout
+        ckpt_ns = pathlib.Path(checkpoint_dir) / "assets" / data_cfg.repo_id
+        if norm_stats_dir:
+            ns_path = pathlib.Path(norm_stats_dir)
+        elif finetuned and (ckpt_ns / "norm_stats.json").exists():
+            ns_path = ckpt_ns
+        else:
+            ns_path = cfg.assets_dirs / data_cfg.repo_id
+            if finetuned:
+                print(f"WARNING: no norm-stats snapshot inside the checkpoint ({ckpt_ns});\n"
+                      f"  falling back to the local checkout's {ns_path} — VERIFY these are the stats this\n"
+                      f"  checkpoint was TRAINED with (a train/eval normalizer mismatch corrupts every metric).")
         norm_stats = normalize.load(ns_path)
+        ns_md5 = hashlib.md5((pathlib.Path(ns_path) / "norm_stats.json").read_bytes()).hexdigest()
         print(f"[{condition}] {config_name} <- {checkpoint_dir}  (chunk_len={chunk_len}, state_dim={state_dim})")
+        print(f"[{condition}] norm stats: {ns_path}  (md5 {ns_md5})")
         policy = policy_config.create_trained_policy(cfg, checkpoint_dir, norm_stats=norm_stats, default_prompt=prompt)
 
     eps = [pathlib.Path(p) for p in episodes]
@@ -248,7 +291,8 @@ def main(
     gd_all, pd_all = [], []          # moving displacement pairs across episodes, for the global Kabsch fit
     for ep in eps:
         try:
-            m = eval_episode(policy, ep, frame_stride, chunk_len, prompt, gt_check=gt_check, state_dim=state_dim)
+            m = eval_episode(policy, ep, frame_stride, chunk_len, prompt, gt_check=gt_check, state_dim=state_dim,
+                             frame_remap=human_frame_remap)
             gd_all.append(m.pop("_gd")); pd_all.append(m.pop("_pd"))   # strip arrays (not JSON-serializable)
             m["episode"] = ep.name
             per_ep.append(m)
@@ -258,6 +302,9 @@ def main(
                   f"success={int(m['ordered_success'])} grip_ok={grip}")
         except Exception as e:
             print(f"  {ep.name}: SKIP ({e})")
+
+    if not per_ep:
+        raise RuntimeError(f"[{condition}] ALL {len(eps)} episodes failed — no JSON written, eval is void")
 
     # Subgoal (task-space, path-invariant) metrics lead; pose-match metrics are secondary.
     keys = ["ordered_success", "reached_object", "reached_bowl", "reach_object_err", "reach_bowl_err",
@@ -286,11 +333,25 @@ def main(
               f"| rot(xyz,deg)=[{euler[0]:.0f},{euler[1]:.0f},{euler[2]:.0f}]")
         print(f"[{condition}] -> {'frame/scale mismatch (convertible)' if aligned > 0.4 else 'no transfer even after alignment'}")
 
+    try:  # best-effort provenance: which code produced this JSON
+        git_rev = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
+                                          cwd=pathlib.Path(__file__).parent, text=True).strip()
+    except Exception:
+        git_rev = None
+    skipped = len(eps) - len(per_ep)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
     out = pathlib.Path(output_dir) / f"{condition}.json"
     json.dump({"condition": condition, "config": config_name, "checkpoint": checkpoint_dir,
-               "state_dim": state_dim, "summary": summary, "per_episode": per_ep}, open(out, "w"), indent=2)
+               "state_dim": state_dim, "summary": summary, "per_episode": per_ep,
+               "provenance": {"norm_stats_path": str(ns_path) if ns_path else None, "norm_stats_md5": ns_md5,
+                              "prompt": prompt, "frame_stride": frame_stride, "finetuned": finetuned,
+                              "human_frame_remap": human_frame_remap, "n_skipped": skipped,
+                              "git": git_rev}}, open(out, "w"), indent=2)
     print(f"[{condition}] wrote {out}")
+    if skipped:
+        print(f"[{condition}] WARNING: {skipped}/{len(eps)} episodes were SKIPPED — metrics cover a subset.")
+        if skipped > len(eps) // 2:
+            raise SystemExit(f"[{condition}] more than half the episodes failed; treat {out} as INVALID")
 
 
 if __name__ == "__main__":

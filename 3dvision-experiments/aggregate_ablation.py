@@ -7,12 +7,14 @@ Runs locally (just reads JSONs):
 """
 import glob
 import json
+import os
 import sys
 
 import numpy as np
 
-PRIMARY = "ordered_success"   # task-space proxy (reach object then bowl); higher=better
-BASELINE = "R-ID_only"
+PRIMARY = os.environ.get("ABL_PRIMARY", "reach_object_err")  # continuous reach metric (lower=better) — better
+                                                             # powered than binary ordered_success on 12 episodes
+BASELINE = os.environ.get("ABL_BASELINE", "rid64")           # paired deltas are vs this condition
 
 
 def boot_ci(x, n=10000, alpha=0.05):
@@ -47,7 +49,9 @@ def main(paths):
     # paired deltas vs baseline on the primary metric (same held-out episodes => paired)
     if BASELINE in conds:
         base = {m["episode"]: m[PRIMARY] for m in conds[BASELINE]["per_episode"]}
-        print(f"\nPaired delta on {PRIMARY} vs {BASELINE} (positive = better than teleop baseline):")
+        lower_better = PRIMARY.endswith(("_err", "_mse", "_rmse"))
+        direction = "negative = better (error metric)" if lower_better else "positive = better"
+        print(f"\nPaired delta on {PRIMARY} vs {BASELINE} ({direction}):")
         for c, d in sorted(conds.items()):
             if c == BASELINE:
                 continue

@@ -1,0 +1,26 @@
+# eval_manifest.tsv — one row per ablation condition for run_all_evals.sh
+#
+# Columns (whitespace-separated; first 4 required):
+#   condition   config_name   checkpoint_dir   state_dim   [extra ablation_eval.py args...]
+#
+# - condition is the JSON/output name AND what aggregate_ablation.py keys on. Keep these
+#   exact names (rid64 is the paired-delta baseline).
+# - checkpoint_dir points at ONE step dir (the 30000 final by default). `run_all_evals.sh
+#   sweep <condition>` evals every retained step next to it.
+# - $USER is expanded at submit time; EDITME_* placeholders must be replaced with the
+#   teammate's username who trained that config (see the shared sheet).
+# - base needs NO training: it loads the shared pi0.5 base params with --no-finetuned
+#   (NOTE: tyro syntax — NOT "--finetuned false", which crashes).
+# - hid is the 6-dim human-only model: state_dim 6 (position-only metrics).
+#
+# condition  config               checkpoint_dir                                                        sd  extra
+base    pi05_egoverse        /cluster/work/cvg/data/Egoverse/pi05_base_jax                              24  --no-finetuned
+rid64   pi05_egoverse        /cluster/scratch/lichin/checkpoints/pi05_egoverse/rid64/30000              24
+rid30   pi05_egoverse_n30    /cluster/scratch/EDITME_RID30/checkpoints/pi05_egoverse_n30/rid30/30000   24
+rid15   pi05_egoverse_n15    /cluster/scratch/EDITME_RID15/checkpoints/pi05_egoverse_n15/rid15/30000   24
+rid5    pi05_egoverse_n5     /cluster/scratch/EDITME_RID5/checkpoints/pi05_egoverse_n5/rid5/30000      24
+mix64   pi05_ego_mix_oic     /cluster/scratch/lichin/checkpoints/pi05_ego_mix_oic/mix64/30000           24
+mix30   pi05_ego_mix_oic_n30 /cluster/scratch/EDITME_MIX30/checkpoints/pi05_ego_mix_oic_n30/mix30/30000 24
+mix15   pi05_ego_mix_oic_n15 /cluster/scratch/EDITME_MIX15/checkpoints/pi05_ego_mix_oic_n15/mix15/30000 24
+mix5    pi05_ego_mix_oic_n5  /cluster/scratch/EDITME_MIX5/checkpoints/pi05_ego_mix_oic_n5/mix5/30000    24
+hid     pi05_ego_human_oic   /cluster/scratch/EDITME_HID/checkpoints/pi05_ego_human_oic/hid/30000       6
