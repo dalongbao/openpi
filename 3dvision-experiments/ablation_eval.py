@@ -331,7 +331,11 @@ def main(
         print(f"[{condition}] ALIGNED (global Kabsch, n={mv.sum()} chunks): "
               f"cos_dir {summary['cos_dir']:.3f} -> {aligned:.3f}  | scale={s:.2f}  "
               f"| rot(xyz,deg)=[{euler[0]:.0f},{euler[1]:.0f},{euler[2]:.0f}]")
-        print(f"[{condition}] -> {'frame/scale mismatch (convertible)' if aligned > 0.4 else 'no transfer even after alignment'}")
+        raw = summary["cos_dir"]
+        verdict = ("frames already agree (no mismatch)" if raw > 0.4 and aligned - raw < 0.2
+                   else "frame/scale mismatch (convertible)" if aligned > 0.4
+                   else "no transfer even after alignment")
+        print(f"[{condition}] -> {verdict}")
 
     try:  # best-effort provenance: which code produced this JSON
         git_rev = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
