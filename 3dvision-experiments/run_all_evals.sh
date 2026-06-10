@@ -114,17 +114,31 @@ case "$CMD" in
     ;;
 
   sweep)
+    # Evals every retained step of one condition (appendix: ranking stability across steps).
+    # SWEEP_MAX_STEP (default 20000) caps the grid: the primary is 20k uniform, and steps
+    # beyond it exist only for some conditions -> not comparable, don't burn GPU on them.
+    # SWEEP_EXTRA_DIRS: extra checkpoint parents to scan (e.g. rid64's intermediates live in
+    # /cluster/scratch/$USER/checkpoints_archive/..., NOT next to the manifest path).
     [[ -n "$SWEEP_COND" ]] || { echo "usage: $0 sweep <condition>"; exit 1; }
+    SWEEP_MAX_STEP="${SWEEP_MAX_STEP:-20000}"
     [[ $DRY -eq 1 ]] || mkdir -p "$RESULTS_DIR"
     for i in "${!CONDS[@]}"; do
       [[ "${CONDS[$i]}" == "$SWEEP_COND" ]] || continue
-      parent="$(dirname "${CKPTS[$i]}")"
-      for d in "$parent"/[0-9]*; do
-        [[ -d "$d/params" ]] || continue
-        step="$(basename "$d")"; cond="${SWEEP_COND}_s${step}"
-        [[ $FORCE -eq 0 && -f "$RESULTS_DIR/$cond.json" ]] && { echo "  [$cond] exists, skip"; continue; }
-        submit_one "$i" "$cond" "$d"
+      [[ "${CKPTS[$i]}" == *EDITME* ]] && { echo "ERROR: [$SWEEP_COND] manifest path still EDITME"; exit 1; }
+      n_found=0; seen_steps=" "
+      for parent in "$(dirname "${CKPTS[$i]}")" ${SWEEP_EXTRA_DIRS:-}; do
+        for d in "$parent"/[0-9]*; do
+          [[ -d "$d" ]] || continue
+          step="$(basename "$d")"; cond="${SWEEP_COND}_s${step}"
+          [[ "$seen_steps" == *" $step "* ]] && continue   # same step in two parents (live + archive)
+          seen_steps+="$step "
+          (( step > SWEEP_MAX_STEP )) && { echo "  [$cond] > SWEEP_MAX_STEP=$SWEEP_MAX_STEP, skip"; continue; }
+          [[ -f "$d/_CHECKPOINT_METADATA" && -d "$d/params" ]] || { echo "  [$cond] INCOMPLETE (no _CHECKPOINT_METADATA+params), skip"; continue; }
+          [[ $FORCE -eq 0 && -f "$RESULTS_DIR/$cond.json" ]] && { echo "  [$cond] exists, skip"; continue; }
+          submit_one "$i" "$cond" "$d"; n_found=$((n_found+1))
+        done
       done
+      [[ $n_found -eq 0 ]] && echo "WARN: [$SWEEP_COND] nothing submitted (no eligible steps found — wrong path? all done?)"
       exit 0
     done
     echo "ERROR: condition '$SWEEP_COND' not in manifest"; exit 1
