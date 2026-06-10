@@ -123,6 +123,21 @@ huggingface-cli upload --repo-type model --private <HF_MODEL_ORG>/<CONFIG> \
   /cluster/scratch/$USER/checkpoints/<CONFIG>/<EXP_NAME>/30000 .
 ```
 
+**(d) Checkpoint retention.** Configs keep a checkpoint **every 5k steps** (`keep_period=5_000`), so a
+finished run leaves `5000/10000/.../30000` on scratch — handy for the small-N runs to pick the best step
+or check for overfitting. Two caveats:
+- **A job that started before that change** (or any run still on the old `keep_period=30_000`) keeps only
+  the *latest* intermediate + the final `30000` — older ones are deleted as new ones commit. To rescue the
+  intermediates of an **already-running** job, poll-and-copy them (copy is resume-safe — never move a live
+  checkpoint):
+  ```bash
+  tmux new -s archive
+  bash 3dvision-experiments/archive_checkpoints.sh <CONFIG> <EXP_NAME>   # copies new step dirs every 30 min
+  ```
+  Copies land in `/cluster/scratch/$USER/checkpoints_archive/<CONFIG>/<EXP_NAME>/`. Start it before the next
+  5k step commits (you get ~5 h per checkpoint). **New runs don't need this** — they retain every 5k natively.
+- **Scratch auto-purges after ~15 days** untouched → push anything durable to HF.
+
 ---
 
 ## 3. The configs — pick from this list
