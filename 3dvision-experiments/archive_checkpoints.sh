@@ -22,7 +22,7 @@ shopt -s nullglob
 
 CONFIG="${1:?usage: archive_checkpoints.sh <config> <exp_name> [poll_seconds]}"
 EXP="${2:?usage: archive_checkpoints.sh <config> <exp_name> [poll_seconds]}"
-POLL="${3:-180}"
+POLL="${3:-1800}"   # 30 min: checkpoints survive ~5 h (5k steps @ ~3.5 s/it) before orbax deletes them
 
 LIVE="/cluster/scratch/$USER/checkpoints/$CONFIG/$EXP"
 ARCHIVE="/cluster/scratch/$USER/checkpoints_archive/$CONFIG/$EXP"
