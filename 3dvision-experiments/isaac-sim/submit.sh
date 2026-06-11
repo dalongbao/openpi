@@ -29,6 +29,7 @@ mkdir -p "$ISAAC_SIM_CACHE_DIR"
 
 WORKSPACE=/cluster/scratch/$USER/pi0_test
 CHECKPOINTS=/cluster/work/cvg/data/rytsui/checkpoints
+USER_CHECKPOINTS=/cluster/scratch/$USER/checkpoints          # this user's OWN training checkpoints (rid30, mix5, ...) -> /user_checkpoints
 BASE_WEIGHTS=/cluster/work/cvg/data/Egoverse/pi05_base_jax   # for base-model variants (/base_weights)
 EVAL_SCRIPT="${1:-eval_script_1.py}"   # which script in $WORKSPACE to run
 MODEL="${2:-}"                          # optional model preset -> models/<MODEL>.env
@@ -58,6 +59,11 @@ echo "[submit] EVAL_SCRIPT=$EVAL_SCRIPT  MODEL=${MODEL:-<none>}  MODEL_NAME=${MO
 mkdir -p "$ISAAC_SIM_CACHE_DIR/kit"
 mkdir -p "$ISAAC_SIM_CACHE_DIR/ov_home"
 
+# Bind this user's own scratch checkpoints at /user_checkpoints (only if present), so model
+# presets trained by THIS user (e.g. rid30) resolve without touching rytsui's /checkpoints.
+EXTRA_BINDS=()
+[ -d "$USER_CHECKPOINTS" ] && EXTRA_BINDS+=(--bind "$USER_CHECKPOINTS":/user_checkpoints)
+
 apptainer exec --nv \
     --env "EE_FRAME=${EE_FRAME:-}" \
     --env "QUAT_WXYZ=${QUAT_WXYZ:-}" \
@@ -81,6 +87,7 @@ apptainer exec --nv \
     --bind "$WORKSPACE":/workspace \
     --bind "$OPENPI_DIR":/workspace/openpi \
     --bind "$CHECKPOINTS":/checkpoints \
+    "${EXTRA_BINDS[@]}" \
     --bind "$BASE_WEIGHTS":/base_weights \
     --bind "$ISAAC_SIM_CACHE_DIR/kit":/isaac-sim/kit/cache \
     --bind "$ISAAC_SIM_CACHE_DIR/ov_home":/cluster/home/$USER \
