@@ -21,8 +21,15 @@ rid64   pi05_egoverse        /cluster/scratch/lichin/checkpoints/pi05_egoverse/r
 rid30   pi05_egoverse_n30    /cluster/scratch/kbiziel/checkpoints/pi05_egoverse_n30/rid30/20000        24
 rid15   pi05_egoverse_n15    /cluster/scratch/EDITME_RID15/checkpoints/pi05_egoverse_n15/rid15/20000   24
 rid5    pi05_egoverse_n5     /cluster/scratch/EDITME_RID5/checkpoints/pi05_egoverse_n5/rid5/20000      24
-mix64   pi05_ego_mix_oic     /cluster/scratch/lichin/checkpoints/pi05_ego_mix_oic/mix64/20000           24
+# mix64: 24h wall killed the run at ~25.2k on the OLD retention config -> live dir kept only
+# 25000 (orbax deleted 20000). The 20k primary exists ONLY in the archive (archive_checkpoints.sh).
+mix64   pi05_ego_mix_oic     /cluster/scratch/lichin/checkpoints_archive/pi05_ego_mix_oic/mix64/20000  24
 mix30   pi05_ego_mix_oic_n30 /cluster/scratch/kbiziel/checkpoints/pi05_ego_mix_oic_n30/mix30/20000      24
 mix15   pi05_ego_mix_oic_n15 /cluster/scratch/EDITME_MIX15/checkpoints/pi05_ego_mix_oic_n15/mix15/20000 24
 mix5    pi05_ego_mix_oic_n5  /cluster/scratch/EDITME_MIX5/checkpoints/pi05_ego_mix_oic_n5/mix5/20000    24
 hid     pi05_ego_human_oic   /cluster/scratch/EDITME_HID/checkpoints/pi05_ego_human_oic/hid/20000       6
+# hid_prelim: PRE-EXISTING 2537-ep human-only ckpt (HF zhonglongbao/pi05_ego_human_oic_human_oic,
+# uploaded 2026-05-31, pre-recipe, step OFF the 20k grid -> clearly-footnoted PRELIMINARY point
+# only, never on the main curve; pre-registered in EVAL_PLAYBOOK. Download:
+#   uv run huggingface-cli download zhonglongbao/pi05_ego_human_oic_human_oic --local-dir /cluster/scratch/$USER/hf_ckpts/hid_prelim
+hid_prelim  pi05_ego_human_oic  /cluster/scratch/lichin/hf_ckpts/hid_prelim                             6
