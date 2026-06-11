@@ -240,7 +240,7 @@ else:
     # stares at empty sky / the fidelity wall -> blank-blue video. This touches ONLY the output
     # video, never the policy camera, so it's safe to run on the validated (non-egocentric)
     # path. (apply_egocentric already re-aims it, hence the else.) Opt out with REC_CAM_REAIM=0.
-    if os.environ.get("REC_CAM_REAIM", "1").lower() in ("1", "true", "yes", "y"):
+    if (os.environ.get("REC_CAM_REAIM") or "1").lower() in ("1", "true", "yes", "y"):
         sys.path.insert(0, "/workspace")
         import ego_view
         ego_view.place_recording_camera(_stage)
@@ -344,7 +344,7 @@ if os.environ.get("RID_CALIBRATE", "0").lower() in ("1", "true", "yes", "y"):
     # scale=1 (RID_CALIB_SCALE=0) maps without amplifying motion (fixes overreach when the live
     # trajectory is larger than the demo); RID_CALIB_SCALE_MUL scales the solved s (e.g. 0.7 to
     # damp a too-aggressive reach without dropping all the way to 1.0).
-    _with_scale = os.environ.get("RID_CALIB_SCALE", "1").lower() in ("1", "true", "yes", "y")
+    _with_scale = (os.environ.get("RID_CALIB_SCALE") or "1").lower() in ("1", "true", "yes", "y")
     _R, _t, _s, _fr, _res = oic_frame_calib.build_transform(
         _demo_pos, (_home_base, _ball_base, _bowl_base),
         anchor_frames=os.environ.get("RID_ANCHOR_FRAMES") or None, with_scale=_with_scale)
