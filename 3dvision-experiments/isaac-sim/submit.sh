@@ -77,6 +77,15 @@ apptainer exec --nv \
     --env "OIC_CALIBRATE=${OIC_CALIBRATE:-}" \
     --env "OIC_ANCHOR_FRAMES=${OIC_ANCHOR_FRAMES:-}" \
     --env "BALL_JITTER_SEED=${BALL_JITTER_SEED:-}" \
+    --env "BALL_RADIUS=${BALL_RADIUS:-}" \
+    --env "ACTION_SMOOTH_ALPHA=${ACTION_SMOOTH_ALPHA:-}" \
+    --env "RID_CALIBRATE=${RID_CALIBRATE:-}" \
+    --env "RID_CALIB_ROT=${RID_CALIB_ROT:-}" \
+    --env "RID_CALIB_SCALE=${RID_CALIB_SCALE:-}" \
+    --env "RID_CALIB_SCALE_MUL=${RID_CALIB_SCALE_MUL:-}" \
+    --env "RID_DEMO_NPZ=${RID_DEMO_NPZ:-}" \
+    --env "RID_ANCHOR_FRAMES=${RID_ANCHOR_FRAMES:-}" \
+    --env "REC_CAM_REAIM=${REC_CAM_REAIM:-}" \
     --env "BASE_MODEL=${BASE_MODEL:-}" \
     --env "EGOCENTRIC=${EGOCENTRIC:-}" \
     --env "EGO_HIDE_ARM=${EGO_HIDE_ARM:-}" \

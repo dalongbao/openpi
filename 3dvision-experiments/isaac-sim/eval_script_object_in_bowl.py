@@ -200,7 +200,10 @@ _ball_pos = scene_build.jittered_object_pos(_ball_seed) if _ball_seed else scene
 if _ball_seed:
     print(f"[ball] jittered seed={_ball_seed} pos={tuple(round(v, 3) for v in _ball_pos)} "
           f"(calib still anchored to nominal {scene_build.OBJECT_POS})")
-scene_build.add_ball(_stage, "/World/object", _ball_pos)
+# BALL_RADIUS enlarges the ball (default 0.055 m) for a bigger, more salient target in the
+# 224x224 policy view — steadier visual tracking. Bowl scales with it for proportion.
+_ball_r = float(os.environ.get("BALL_RADIUS") or "0.055")
+scene_build.add_ball(_stage, "/World/object", _ball_pos, r=_ball_r)
 scene_build.add_bowl(_stage, "/World/bowl", scene_build.BOWL_POS)
 
 # Base-frame position of the ACTUAL ball (possibly jittered) for the reach-vs-ball diagnostic.
@@ -440,7 +443,10 @@ last_action_chunk = None
 chunk_idx         = 0
 step              = 0
 smoothed_cmd      = None      # exponential moving average over joint position targets
-ACTION_SMOOTH_ALPHA = 0.8    # blend new target with previous (0.4 was too slow — arm froze at mean)
+# Blend new joint target with previous (EMA). 1.0 = no smoothing (raw, jittery); lower =
+# steadier but laggier. 0.8 default; ACTION_SMOOTH_ALPHA=0.5 damps the ball<->bowl oscillation
+# seen with rid64 (the old "0.4 froze" note was the WEAK 5-ep model; rid64 has real signal).
+ACTION_SMOOTH_ALPHA = float(os.environ.get("ACTION_SMOOTH_ALPHA") or "0.8")
 
 try:
     world.reset()
@@ -516,8 +522,10 @@ try:
         # actual ball. xy_err shrinking toward the ball => it's reaching the right place.
         if step % 50 == 0 and _BALL_ACTUAL_BASE is not None:
             _xy = float(np.linalg.norm(np.asarray(base_pose[:2], float) - _BALL_ACTUAL_BASE[:2]))
+            # grip≈1 = closing/closed, ≈0 = open. If it never rises near the ball (low xy_err),
+            # the grasp isn't being commanded -> that's why the reach won't dwell/complete.
             print(f"[reach] step {step:4d} target_base={np.round(base_pose[:3], 3).tolist()} "
-                  f"ball_base={np.round(_BALL_ACTUAL_BASE, 3).tolist()} xy_err={_xy:.3f}m")
+                  f"ball_base={np.round(_BALL_ACTUAL_BASE, 3).tolist()} xy_err={_xy:.3f}m grip={gripper_cmd:.2f}")
         if ik_ok and arm_joints is not None:
             _warm = np.asarray(arm_joints, dtype=np.float64)
         # else: hold the previous joints (don't jump the arm on an IK failure)
