@@ -322,7 +322,11 @@ if os.environ.get("RID_CALIBRATE", "0").lower() in ("1", "true", "yes", "y"):
     print(f"[calib] frames(start,grasp,release)={_fr} scale={_s:.3f} resid_m={np.round(_res, 3).tolist()}")
     print(f"[calib] home_base={np.round(_home_base, 3).tolist()} ball_base={np.round(_ball_base, 3).tolist()} "
           f"bowl_base={np.round(_bowl_base, 3).tolist()}")
-    print(f"[calib] R≈I,s≈1,t≈0 => model already base-frame.  t={np.round(_t, 3).tolist()}")
+    _tn = float(np.linalg.norm(_t))
+    _near_identity = abs(_s - 1.0) < 0.1 and _tn < 0.05
+    print(f"[calib] t={np.round(_t, 3).tolist()} ||t||={_tn:.3f} scale={_s:.3f} => "
+          + ("model ≈ base-frame (calib is a near no-op)" if _near_identity
+             else "model is NOT base-frame; calib repositions + rescales the reach"))
 
 _CALIB_ROT = os.environ.get("RID_CALIB_ROT", "0").lower() in ("1", "true", "yes", "y")
 
