@@ -369,8 +369,21 @@ if os.environ.get("RID_CALIBRATE", "0").lower() in ("1", "true", "yes", "y"):
     import scene_build
     from pxr import Gf as _Gf
     from pxr import UsdGeom as _UG
-    _demo_npz = os.environ.get("RID_DEMO_NPZ") or "/workspace/rid_demo.npz"
-    _demo_pos = np.asarray(np.load(_demo_npz)["actions24"], np.float64)[:, :3]
+    # Prefer dataset-wide anchors (rid_anchors.py averages start/grasp/release over ALL R_ID
+    # episodes -> robust). Fall back to a single demo's trajectory (make_rid_demo.py / rid_demo.npz).
+    _anch_npz = os.environ.get("RID_ANCHORS_NPZ") or "/workspace/rid_anchors.npz"
+    if os.path.exists(_anch_npz):
+        _a = np.load(_anch_npz)
+        _demo_pos = np.stack([_a["start3"], _a["grasp3"], _a["release3"]]).astype(np.float64)
+        _anchor_frames = (0, 1, 2)
+        print(f"[calib] dataset-averaged anchors from {_anch_npz} (n={int(_a['n'])}): "
+              f"start={np.round(_a['start3'], 3).tolist()} grasp={np.round(_a['grasp3'], 3).tolist()} "
+              f"release={np.round(_a['release3'], 3).tolist()}")
+    else:
+        _demo_npz = os.environ.get("RID_DEMO_NPZ") or "/workspace/rid_demo.npz"
+        _demo_pos = np.asarray(np.load(_demo_npz)["actions24"], np.float64)[:, :3]
+        _anchor_frames = os.environ.get("RID_ANCHOR_FRAMES") or None
+        print(f"[calib] single-demo anchors from {_demo_npz} ({len(_demo_pos)} frames)")
     _w2b = _UG.XformCache().GetLocalToWorldTransform(_stage.GetPrimAtPath("/World/fr3")).GetInverse()
 
     def _w2b_pt(p):
@@ -386,7 +399,7 @@ if os.environ.get("RID_CALIBRATE", "0").lower() in ("1", "true", "yes", "y"):
     _with_scale = (os.environ.get("RID_CALIB_SCALE") or "1").lower() in ("1", "true", "yes", "y")
     _R, _t, _s, _fr, _res = oic_frame_calib.build_transform(
         _demo_pos, (_home_base, _ball_base, _bowl_base),
-        anchor_frames=os.environ.get("RID_ANCHOR_FRAMES") or None, with_scale=_with_scale)
+        anchor_frames=_anchor_frames, with_scale=_with_scale)
     _s *= float(os.environ.get("RID_CALIB_SCALE_MUL") or "1.0")
     # Re-solve translation so the anchors stay centered after the scale tweak (t = mean_base - s*R@mean_model).
     _mm = _demo_pos[list(_fr)].mean(0); _mb = np.array([_home_base, _ball_base, _bowl_base]).mean(0)
