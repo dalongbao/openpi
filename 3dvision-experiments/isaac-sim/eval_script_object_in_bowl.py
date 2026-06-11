@@ -526,6 +526,10 @@ try:
             # the grasp isn't being commanded -> that's why the reach won't dwell/complete.
             print(f"[reach] step {step:4d} target_base={np.round(base_pose[:3], 3).tolist()} "
                   f"ball_base={np.round(_BALL_ACTUAL_BASE, 3).tolist()} xy_err={_xy:.3f}m grip={gripper_cmd:.2f}")
+            # Full 17-dim ORCA hand action: is a grasp encoded in ANY dim when xy_err is small?
+            # max/argmax tells us which dim to drive the gripper from if mean(hand[:3]) misses it.
+            print(f"[hand] step {step:4d} max={hand_action.max():.2f}@{int(hand_action.argmax())} "
+                  f"min={hand_action.min():.2f} hand={np.round(hand_action, 2).tolist()}")
         if ik_ok and arm_joints is not None:
             _warm = np.asarray(arm_joints, dtype=np.float64)
         # else: hold the previous joints (don't jump the arm on an IK failure)
