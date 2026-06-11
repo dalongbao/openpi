@@ -203,6 +203,20 @@ if _ball_seed:
 scene_build.add_ball(_stage, "/World/object", _ball_pos)
 scene_build.add_bowl(_stage, "/World/bowl", scene_build.BOWL_POS)
 
+# Base-frame position of the ACTUAL ball (possibly jittered) for the reach-vs-ball diagnostic.
+# The policy's commanded EE target IS its implicit "where I think the ball is" (the task is to
+# reach the ball), so the loop logs that target vs this and the xy error.
+try:
+    from pxr import Gf as _Gfb
+    from pxr import UsdGeom as _UGb
+    _w2b_ball = _UGb.XformCache().GetLocalToWorldTransform(_stage.GetPrimAtPath("/World/fr3")).GetInverse()
+    _v = _w2b_ball.Transform(_Gfb.Vec3d(*[float(x) for x in _ball_pos]))
+    _BALL_ACTUAL_BASE = np.array([_v[0], _v[1], _v[2]], np.float64)
+    print(f"[ball] actual ball in BASE frame = {np.round(_BALL_ACTUAL_BASE, 3).tolist()}")
+except Exception as _e:
+    _BALL_ACTUAL_BASE = None
+    print(f"[ball] could not compute base-frame ball pos: {_e}")
+
 # Opt-in scene realism (lights, floor, backdrop) to reduce SigLIP OOD. Off by default
 # so the validated path is unchanged; enable with SCENE_FIDELITY=1. Preview the look
 # fast (no policy) with scene_preview.py before running a full eval.
@@ -495,7 +509,15 @@ try:
 
         # EE pose -> joint targets via IK; warmstart from the previous solution for continuity.
         # _to_base_pose maps MODEL->BASE frame when RID_CALIBRATE=1 (no-op otherwise).
-        arm_joints, ik_ok = kin.ik(_to_base_pose(arm_pose), _warm)
+        base_pose = _to_base_pose(arm_pose)
+        arm_joints, ik_ok = kin.ik(base_pose, _warm)
+
+        # "Where the robot thinks the ball is" = its commanded base-frame reach target, vs the
+        # actual ball. xy_err shrinking toward the ball => it's reaching the right place.
+        if step % 50 == 0 and _BALL_ACTUAL_BASE is not None:
+            _xy = float(np.linalg.norm(np.asarray(base_pose[:2], float) - _BALL_ACTUAL_BASE[:2]))
+            print(f"[reach] step {step:4d} target_base={np.round(base_pose[:3], 3).tolist()} "
+                  f"ball_base={np.round(_BALL_ACTUAL_BASE, 3).tolist()} xy_err={_xy:.3f}m")
         if ik_ok and arm_joints is not None:
             _warm = np.asarray(arm_joints, dtype=np.float64)
         # else: hold the previous joints (don't jump the arm on an IK failure)
