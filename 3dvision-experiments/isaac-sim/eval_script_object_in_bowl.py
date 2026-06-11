@@ -220,6 +220,33 @@ except Exception as _e:
     _BALL_ACTUAL_BASE = None
     print(f"[ball] could not compute base-frame ball pos: {_e}")
 
+# --- Optional SCRIPTED GRASP ASSIST (GRASP_PROXIMITY>0, default OFF) -------------------------
+# The reach is solved, but the ORCA hand doesn't map to a 2-finger close, so the ball is never
+# picked and the policy stays stuck in "reach". This closes the gripper + carries the ball once
+# the EE is within GRASP_PROXIMITY of it, then drops it when the EE reaches the bowl. The policy
+# still does ALL the reaching/placing; only the grasp instant is scripted (label it as such).
+_GRASP_PROX    = float(os.environ.get("GRASP_PROXIMITY") or "0")
+_GRASP_RELEASE = float(os.environ.get("GRASP_RELEASE") or "0.10")
+_BOWL_BASE = None
+_base_to_world = None
+if _GRASP_PROX > 0:
+    try:
+        from pxr import Gf as _Gfg
+        from pxr import UsdGeom as _UGg
+        _fr3_l2w = _UGg.XformCache().GetLocalToWorldTransform(_stage.GetPrimAtPath("/World/fr3"))
+        _w2b_g = _fr3_l2w.GetInverse()
+
+        def _base_to_world(p):
+            v = _fr3_l2w.Transform(_Gfg.Vec3d(float(p[0]), float(p[1]), float(p[2])))
+            return np.array([v[0], v[1], v[2]], np.float64)
+
+        _bv = _w2b_g.Transform(_Gfg.Vec3d(*[float(x) for x in scene_build.BOWL_POS]))
+        _BOWL_BASE = np.array([_bv[0], _bv[1], _bv[2]], np.float64)
+        print(f"[grasp] assist ON: prox={_GRASP_PROX} release={_GRASP_RELEASE} bowl_base={np.round(_BOWL_BASE, 3).tolist()}")
+    except Exception as _e:
+        print(f"[grasp] setup failed -> assist OFF: {_e}")
+        _GRASP_PROX = 0.0
+
 # Opt-in scene realism (lights, floor, backdrop) to reduce SigLIP OOD. Off by default
 # so the validated path is unchanged; enable with SCENE_FIDELITY=1. Preview the look
 # fast (no policy) with scene_preview.py before running a full eval.
@@ -254,6 +281,18 @@ world.reset()
 franka = Articulation(prim_path="/World/fr3", name="franka")
 franka.initialize()
 print(f"[init] Franka has {franka.num_dof} DOF")
+
+# Wrap the ball as a RigidPrim so the grasp assist can carry it (teleport to the gripper).
+_ball_rp = None
+if _GRASP_PROX > 0:
+    try:
+        from omni.isaac.core.prims import RigidPrim as _RigidPrim
+        _ball_rp = _RigidPrim(prim_path="/World/object", name="ball_rp")
+        _ball_rp.initialize()
+        print("[grasp] ball wrapped as RigidPrim (carry enabled)")
+    except Exception as _e:
+        print(f"[grasp] RigidPrim wrap failed -> gripper closes but ball won't be carried: {_e}")
+        _ball_rp = None
 
 # --- Policy camera: ExternalCamera in USD (224×224, repositioned by user) ---
 external_cam = Camera(prim_path="/World/ExternalCamera", resolution=POLICY_CAM_RES)
@@ -446,6 +485,8 @@ last_action_chunk = None
 chunk_idx         = 0
 step              = 0
 smoothed_cmd      = None      # exponential moving average over joint position targets
+_grasped          = False     # scripted grasp-assist latches
+_released         = False
 # Blend new joint target with previous (EMA). 1.0 = no smoothing (raw, jittery); lower =
 # steadier but laggier. 0.8 default; ACTION_SMOOTH_ALPHA=0.5 damps the ball<->bowl oscillation
 # seen with rid64 (the old "0.4 froze" note was the WEAK 5-ep model; rid64 has real signal).
@@ -541,6 +582,29 @@ try:
         if ik_ok and arm_joints is not None:
             _warm = np.asarray(arm_joints, dtype=np.float64)
         # else: hold the previous joints (don't jump the arm on an IK failure)
+
+        # ---- SCRIPTED GRASP ASSIST ---- (close + carry the ball on proximity, drop at the bowl)
+        if _GRASP_PROX > 0 and _BALL_ACTUAL_BASE is not None:
+            ee_cur = np.asarray(kin.fk(joint_pos[:7])[:3], np.float64)   # current EE, base frame
+            if not _grasped and np.linalg.norm(ee_cur[:2] - _BALL_ACTUAL_BASE[:2]) < _GRASP_PROX:
+                _grasped = True
+                print(f"[grasp] CLOSE at step {step} ee={np.round(ee_cur, 3).tolist()}")
+            if _grasped and not _released:
+                gripper_cmd = 1.0                                        # force close
+                if _ball_rp is not None and _base_to_world is not None:
+                    try:
+                        _ball_rp.set_world_pose(position=_base_to_world(ee_cur - np.array([0.0, 0.0, 0.10])))
+                    except Exception as _ge:
+                        if step % 200 == 0:
+                            print(f"[grasp] carry set_world_pose failed: {_ge}")
+                if _BOWL_BASE is not None and np.linalg.norm(ee_cur[:2] - _BOWL_BASE[:2]) < _GRASP_RELEASE:
+                    _released = True
+                    print(f"[grasp] RELEASE over bowl at step {step}")
+                    if _ball_rp is not None:
+                        try:
+                            _ball_rp.set_world_pose(position=_base_to_world(_BOWL_BASE + np.array([0.0, 0.0, 0.06])))
+                        except Exception:
+                            pass
 
         finger_l, finger_r = to_gripper_positions(gripper_cmd)
         full_cmd = np.zeros(9, dtype=np.float32)
