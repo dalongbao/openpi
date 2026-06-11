@@ -19,8 +19,8 @@
 base    pi05_egoverse        /cluster/work/cvg/data/Egoverse/pi05_base_jax                              24  --no-finetuned
 rid64   pi05_egoverse        /cluster/scratch/lichin/checkpoints/pi05_egoverse/rid64/20000              24
 rid30   pi05_egoverse_n30    /cluster/scratch/kbiziel/checkpoints/pi05_egoverse_n30/rid30/20000        24
-rid15   pi05_egoverse_n15    /cluster/scratch/EDITME_RID15/checkpoints/pi05_egoverse_n15/rid15/20000   24
-rid5    pi05_egoverse_n5     /cluster/scratch/EDITME_RID5/checkpoints/pi05_egoverse_n5/rid5/20000      24
+rid15   pi05_egoverse_n15    /cluster/scratch/rytsui/checkpoints/pi05_egoverse_n15/rid15/20000         24
+rid5    pi05_egoverse_n5     /cluster/scratch/rytsui/checkpoints/pi05_egoverse_n5/rid5/20000           24
 # mix64: 24h wall killed the run at ~25.2k on the OLD retention config -> live dir kept only
 # 25000 (orbax deleted 20000). The 20k primary exists ONLY in the archive (archive_checkpoints.sh).
 mix64   pi05_ego_mix_oic     /cluster/scratch/lichin/checkpoints_archive/pi05_ego_mix_oic/mix64/20000  24
