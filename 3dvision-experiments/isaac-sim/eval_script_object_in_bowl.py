@@ -209,6 +209,15 @@ if os.environ.get("EGOCENTRIC", "0").lower() in ("1", "true", "yes", "y"):
     sys.path.insert(0, "/workspace")
     import ego_view
     ego_view.apply_egocentric(_stage, hide_arm=os.environ.get("EGO_HIDE_ARM", "0").lower() in ("1", "true", "yes", "y"))
+else:
+    # ALWAYS re-aim the HD RecordingCamera at the workspace: the USD ships a stale pose that
+    # stares at empty sky / the fidelity wall -> blank-blue video. This touches ONLY the output
+    # video, never the policy camera, so it's safe to run on the validated (non-egocentric)
+    # path. (apply_egocentric already re-aims it, hence the else.) Opt out with REC_CAM_REAIM=0.
+    if os.environ.get("REC_CAM_REAIM", "1").lower() in ("1", "true", "yes", "y"):
+        sys.path.insert(0, "/workspace")
+        import ego_view
+        ego_view.place_recording_camera(_stage)
 
 # Data is 50 Hz; step physics at 1/50 s so the policy runs at its training control rate
 # (Isaac default is 1/60, which would desync observation/action cadence from training).
