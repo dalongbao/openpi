@@ -71,6 +71,12 @@ if cp.IsValid():
 if os.environ.get("EGOCENTRIC", "0").lower() in ("1", "true", "yes", "y"):
     import ego_view
     ego_view.apply_egocentric(stage, hide_arm=os.environ.get("EGO_HIDE_ARM", "0").lower() in ("1", "true", "yes", "y"))
+else:
+    # Always re-aim the HD RecordingCamera so preview_hd.png shows the workspace, not the stale
+    # USD pose (blank sky / fidelity wall). Mirrors the eval. Opt out with REC_CAM_REAIM=0.
+    if os.environ.get("REC_CAM_REAIM", "1").lower() in ("1", "true", "yes", "y"):
+        import ego_view
+        ego_view.place_recording_camera(stage)
 
 world = World(stage_units_in_meters=1.0, physics_dt=1.0 / 50.0, rendering_dt=1.0 / 50.0)
 world.reset()
