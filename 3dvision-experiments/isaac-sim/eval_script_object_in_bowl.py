@@ -362,7 +362,10 @@ if os.environ.get("RID_CALIBRATE", "0").lower() in ("1", "true", "yes", "y"):
           + ("model ≈ base-frame (calib is a near no-op)" if _near_identity
              else "model is NOT base-frame; calib repositions + rescales the reach"))
 
-_CALIB_ROT = os.environ.get("RID_CALIB_ROT", "0").lower() in ("1", "true", "yes", "y")
+_CALIB_ROT = (os.environ.get("RID_CALIB_ROT") or "0").lower() in ("1", "true", "yes", "y")
+# LOCK_EE_QUAT=1: ignore the policy's wrist orientation, hold the clean downward grasp quat
+# (START_EE_POSE[3:7]) so IK gives a natural reach instead of contorting to a mis-framed wrist.
+_LOCK_EE_QUAT = (os.environ.get("LOCK_EE_QUAT") or "0").lower() in ("1", "true", "yes", "y")
 
 
 def _to_base_pose(pose7):
@@ -516,6 +519,11 @@ try:
         # EE pose -> joint targets via IK; warmstart from the previous solution for continuity.
         # _to_base_pose maps MODEL->BASE frame when RID_CALIBRATE=1 (no-op otherwise).
         base_pose = _to_base_pose(arm_pose)
+        # LOCK_EE_QUAT=1 overrides the (often mis-framed/noisy) policy orientation with the clean
+        # downward grasp orientation, so IK reaches the xyz target with a natural posture instead
+        # of contorting the wrist. Position (the validated signal) is untouched.
+        if _LOCK_EE_QUAT:
+            base_pose = np.concatenate([np.asarray(base_pose[:3], np.float64), START_EE_POSE[3:7]])
         arm_joints, ik_ok = kin.ik(base_pose, _warm)
 
         # "Where the robot thinks the ball is" = its commanded base-frame reach target, vs the
