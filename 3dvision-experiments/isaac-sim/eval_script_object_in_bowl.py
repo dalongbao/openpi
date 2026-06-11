@@ -274,6 +274,76 @@ kin = ik_fk_helpers.FrankaKinematics(ee_frame=EE_FRAME, quat_wxyz=QUAT_WXYZ)
 START_EE_POSE = np.array([0.47, 0.02, 0.28, 0.997, 0.004, -0.042, -0.057], dtype=np.float64)
 
 
+# --------------------------------------------------------------------
+# OPTIONAL FRAME CALIBRATION (EXPERIMENTAL, default OFF — RID_CALIBRATE=1)
+# --------------------------------------------------------------------
+# object_in_bowl arm actions are CLAIMED to be in the Franka base frame (convention resolved
+# 2026-06-03), but the 5-ep model froze at the mean, so this was never tested with a model
+# that actually moves. If a stronger model (rid30/rid64) un-freezes yet reaches the WRONG
+# place — exactly what the oic model did — its EE frame is egocentric, not base. This solves
+# the SAME rigid transform (R,t,s) the oic path used (oic_frame_calib.umeyama), anchoring the
+# demo's start/grasp/release positions to the sim home/ball/bowl, then maps model<->base in
+# the observation (FK) and action (IK) hooks below.
+#
+# Diagnostic property: if the model is genuinely base-frame already, the solve returns R≈I,
+# s≈1, t≈0 and the hooks are near-no-ops — so the printed scale/residual TELLS you which frame
+# the model lives in. Needs rid_demo.npz (see make_rid_demo.py). Position is mapped always;
+# orientation only if RID_CALIB_ROT=1 (needs scipy in /isaac_packages).
+_CALIB_T = None   # (R, t, s): base_pos = s*R@model_pos + t ; None => identity (no-op)
+if os.environ.get("RID_CALIBRATE", "0").lower() in ("1", "true", "yes", "y"):
+    import oic_frame_calib
+    import scene_build
+    from pxr import Gf as _Gf
+    from pxr import UsdGeom as _UG
+    _demo_npz = os.environ.get("RID_DEMO_NPZ") or "/workspace/rid_demo.npz"
+    _demo_pos = np.asarray(np.load(_demo_npz)["actions24"], np.float64)[:, :3]
+    _w2b = _UG.XformCache().GetLocalToWorldTransform(_stage.GetPrimAtPath("/World/fr3")).GetInverse()
+
+    def _w2b_pt(p):
+        v = _w2b.Transform(_Gf.Vec3d(float(p[0]), float(p[1]), float(p[2])))
+        return np.array([v[0], v[1], v[2]], np.float64)
+
+    _home_base = np.asarray(START_EE_POSE[:3], np.float64)   # sim home is already base-frame
+    _ball_base = _w2b_pt(scene_build.OBJECT_POS)
+    _bowl_base = _w2b_pt(scene_build.BOWL_POS)
+    _R, _t, _s, _fr, _res = oic_frame_calib.build_transform(
+        _demo_pos, (_home_base, _ball_base, _bowl_base),
+        anchor_frames=os.environ.get("RID_ANCHOR_FRAMES") or None)
+    _CALIB_T = (_R, _t, _s)
+    print(f"[calib] frames(start,grasp,release)={_fr} scale={_s:.3f} resid_m={np.round(_res, 3).tolist()}")
+    print(f"[calib] home_base={np.round(_home_base, 3).tolist()} ball_base={np.round(_ball_base, 3).tolist()} "
+          f"bowl_base={np.round(_bowl_base, 3).tolist()}")
+    print(f"[calib] R≈I,s≈1,t≈0 => model already base-frame.  t={np.round(_t, 3).tolist()}")
+
+_CALIB_ROT = os.environ.get("RID_CALIB_ROT", "0").lower() in ("1", "true", "yes", "y")
+
+
+def _to_base_pose(pose7):
+    """[x,y,z, qx,qy,qz,qw] MODEL frame -> BASE frame (for IK). No-op if uncalibrated."""
+    if _CALIB_T is None:
+        return pose7
+    R, t, s = _CALIB_T
+    out = np.array(pose7, np.float64)
+    out[:3] = s * (R @ out[:3]) + t
+    if _CALIB_ROT:
+        from scipy.spatial.transform import Rotation as _Rot
+        out[3:7] = _Rot.from_matrix(R @ _Rot.from_quat(out[3:7]).as_matrix()).as_quat()
+    return out
+
+
+def _to_model_pose(pose7):
+    """Inverse: BASE-frame pose -> MODEL frame (for the observation state). No-op if uncalibrated."""
+    if _CALIB_T is None:
+        return pose7
+    R, t, s = _CALIB_T
+    out = np.array(pose7, np.float64)
+    out[:3] = (R.T @ (out[:3] - t)) / s
+    if _CALIB_ROT:
+        from scipy.spatial.transform import Rotation as _Rot
+        out[3:7] = _Rot.from_matrix(R.T @ _Rot.from_quat(out[3:7]).as_matrix()).as_quat()
+    return out
+
+
 # Training-mean hand state (dims 7-23) across all 5 training episodes.
 # Feeding zeros was OOD; using the mean keeps state in the training distribution.
 # Updated each step with the policy's own hand action prediction (autoregressive).
@@ -289,7 +359,8 @@ _hand_state = HAND_MEAN.copy()   # updated each step
 def build_observation(ext_img_uint8, joint_pos):
     # Arm state = FK(current 7 arm joints) -> EE pose [x,y,z, xyzw] in base frame,
     # matching the training state (qpos_arm is an EE pose, same convention as actions).
-    ee_pose = kin.fk(joint_pos[:7])           # (7,) stored convention
+    ee_pose = kin.fk(joint_pos[:7])           # (7,) stored convention, BASE frame
+    ee_pose = _to_model_pose(ee_pose)         # -> MODEL frame (no-op unless RID_CALIBRATE=1)
     state = np.zeros(24, dtype=np.float32)
     state[:7]   = ee_pose.astype(np.float32)
     state[7:24] = _hand_state                 # prev predicted hand action (in-distribution)
@@ -393,7 +464,8 @@ try:
         _hand_state[:] = hand_action               # autoregressive hand state (in-distribution)
 
         # EE pose -> joint targets via IK; warmstart from the previous solution for continuity.
-        arm_joints, ik_ok = kin.ik(arm_pose, _warm)
+        # _to_base_pose maps MODEL->BASE frame when RID_CALIBRATE=1 (no-op otherwise).
+        arm_joints, ik_ok = kin.ik(_to_base_pose(arm_pose), _warm)
         if ik_ok and arm_joints is not None:
             _warm = np.asarray(arm_joints, dtype=np.float64)
         # else: hold the previous joints (don't jump the arm on an IK failure)

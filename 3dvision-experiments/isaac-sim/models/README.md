@@ -9,6 +9,7 @@ sources the file and forwards the values into the container.
 |--------|--------|----------|-------|
 | `egoverse_5ep` | `pi05_egoverse` | 5 | Original object_in_bowl finetune. 24-dim (arm+hand). Weak (real-frame cosine ~0.385). Run with `eval_script_object_in_bowl.py`. |
 | `rid30` | `pi05_egoverse_n30` | 30 | R_ID object_in_bowl finetune, 30 robot episodes (step 20000). Same 24-dim arm+hand → `eval_script_object_in_bowl.py`, arm visible. Checkpoint is in THIS user's scratch (`/user_checkpoints`), bound by `submit.sh`. |
+| `rid64` | `pi05_egoverse` | 64 | R_ID object_in_bowl finetune, FULL 64 episodes (step 30000). Strongest robot model. 24-dim → `eval_script_object_in_bowl.py`, arm visible. Teammate-owned (lichin), bound at `/shared_checkpoints` by `submit.sh`. |
 | `oic_human_2537ep` | `pi05_ego_human_oic` | 2537 | Object-in-container, human (Aria) data. **6-dim single-arm cartesian (no hand)** → run with the dedicated `eval_script_oic.py`. Euler order/frame unresolved; the script sweeps `EULER_ORDER` at startup. |
 | `base` | `pi05_egoverse` | 0 | Untrained pi0.5. Use the dedicated `eval_script_base_object_in_bowl.py`. |
 

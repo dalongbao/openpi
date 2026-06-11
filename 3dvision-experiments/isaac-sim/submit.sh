@@ -30,6 +30,7 @@ mkdir -p "$ISAAC_SIM_CACHE_DIR"
 WORKSPACE=/cluster/scratch/$USER/pi0_test
 CHECKPOINTS=/cluster/work/cvg/data/rytsui/checkpoints
 USER_CHECKPOINTS=/cluster/scratch/$USER/checkpoints          # this user's OWN training checkpoints (rid30, mix5, ...) -> /user_checkpoints
+SHARED_CHECKPOINTS=${SHARED_CHECKPOINTS:-/cluster/scratch/lichin/checkpoints}  # teammate-owned baselines (rid64, mix64) -> /shared_checkpoints
 BASE_WEIGHTS=/cluster/work/cvg/data/Egoverse/pi05_base_jax   # for base-model variants (/base_weights)
 EVAL_SCRIPT="${1:-eval_script_1.py}"   # which script in $WORKSPACE to run
 MODEL="${2:-}"                          # optional model preset -> models/<MODEL>.env
@@ -63,6 +64,7 @@ mkdir -p "$ISAAC_SIM_CACHE_DIR/ov_home"
 # presets trained by THIS user (e.g. rid30) resolve without touching rytsui's /checkpoints.
 EXTRA_BINDS=()
 [ -d "$USER_CHECKPOINTS" ] && EXTRA_BINDS+=(--bind "$USER_CHECKPOINTS":/user_checkpoints)
+[ -d "$SHARED_CHECKPOINTS" ] && EXTRA_BINDS+=(--bind "$SHARED_CHECKPOINTS":/shared_checkpoints)
 
 apptainer exec --nv \
     --env "EE_FRAME=${EE_FRAME:-}" \
