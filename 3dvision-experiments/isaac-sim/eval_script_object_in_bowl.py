@@ -191,7 +191,16 @@ for _old in ("/World/plate_small", "/World/SM_Crate_A07_Yellow_01_physics"):
 # the ball is graspable and drops into the bowl. The table look is handled by scene_fidelity. ---
 sys.path.insert(0, "/workspace")
 import scene_build
-scene_build.add_ball(_stage, "/World/object", scene_build.OBJECT_POS)
+# BALL_JITTER_SEED moves the ball off OBJECT_POS by a seeded 10-15 cm planar offset, WITHOUT
+# touching the calibration (which stays anchored to nominal OBJECT_POS). Tracking test: if the
+# reach follows the moved ball the policy is localizing it from vision; if it stays at nominal
+# it is replaying a fixed/calibrated pose (no visual tracking).
+_ball_seed = int(os.environ.get("BALL_JITTER_SEED") or "0")
+_ball_pos = scene_build.jittered_object_pos(_ball_seed) if _ball_seed else scene_build.OBJECT_POS
+if _ball_seed:
+    print(f"[ball] jittered seed={_ball_seed} pos={tuple(round(v, 3) for v in _ball_pos)} "
+          f"(calib still anchored to nominal {scene_build.OBJECT_POS})")
+scene_build.add_ball(_stage, "/World/object", _ball_pos)
 scene_build.add_bowl(_stage, "/World/bowl", scene_build.BOWL_POS)
 
 # Opt-in scene realism (lights, floor, backdrop) to reduce SigLIP OOD. Off by default
