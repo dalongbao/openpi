@@ -13,6 +13,7 @@ export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 export WANDB_MODE="disabled"
+export PYTHONUNBUFFERED=1   # stream per-episode lines to the .out live (eval prints <8KB total, so block buffering hides ALL progress until exit)
 
 echo "=== ablation eval ===  Node: $(hostname)  Date: $(date)"
 echo "Args: $*"
