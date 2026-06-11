@@ -315,9 +315,17 @@ if os.environ.get("RID_CALIBRATE", "0").lower() in ("1", "true", "yes", "y"):
     _home_base = np.asarray(START_EE_POSE[:3], np.float64)   # sim home is already base-frame
     _ball_base = _w2b_pt(scene_build.OBJECT_POS)
     _bowl_base = _w2b_pt(scene_build.BOWL_POS)
+    # scale=1 (RID_CALIB_SCALE=0) maps without amplifying motion (fixes overreach when the live
+    # trajectory is larger than the demo); RID_CALIB_SCALE_MUL scales the solved s (e.g. 0.7 to
+    # damp a too-aggressive reach without dropping all the way to 1.0).
+    _with_scale = os.environ.get("RID_CALIB_SCALE", "1").lower() in ("1", "true", "yes", "y")
     _R, _t, _s, _fr, _res = oic_frame_calib.build_transform(
         _demo_pos, (_home_base, _ball_base, _bowl_base),
-        anchor_frames=os.environ.get("RID_ANCHOR_FRAMES") or None)
+        anchor_frames=os.environ.get("RID_ANCHOR_FRAMES") or None, with_scale=_with_scale)
+    _s *= float(os.environ.get("RID_CALIB_SCALE_MUL") or "1.0")
+    # Re-solve translation so the anchors stay centered after the scale tweak (t = mean_base - s*R@mean_model).
+    _mm = _demo_pos[list(_fr)].mean(0); _mb = np.array([_home_base, _ball_base, _bowl_base]).mean(0)
+    _t = _mb - _s * (_R @ _mm)
     _CALIB_T = (_R, _t, _s)
     print(f"[calib] frames(start,grasp,release)={_fr} scale={_s:.3f} resid_m={np.round(_res, 3).tolist()}")
     print(f"[calib] home_base={np.round(_home_base, 3).tolist()} ball_base={np.round(_ball_base, 3).tolist()} "
